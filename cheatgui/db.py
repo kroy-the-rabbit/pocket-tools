@@ -39,7 +39,11 @@ RAW = f"https://raw.githubusercontent.com/{REPO}"
 # card rather than repeated, because a directory fetched that nothing reads is
 # wasted download and one read that nothing fetches is a system that is
 # permanently empty. Turning a system off in card.ENABLED turns it off here.
-DIRS = tuple(card.SUPPORTED[p] for p in card.ENABLED)
+# SUPPORTED rather than ENABLED, because the two are no longer the same tuple:
+# the cartridge dumper can be switched on as a platform without being a system
+# libretro has cheat files for, and asking ENABLED for its directory would be a
+# KeyError the first time somebody enabled it.
+DIRS = tuple(card.SUPPORTED.values())
 
 # Enough to keep the link busy without looking like a scrape. The files average
 # 5 KB, so this is latency bound rather than bandwidth bound.
