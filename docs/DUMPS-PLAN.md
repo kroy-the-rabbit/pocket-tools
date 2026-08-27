@@ -42,8 +42,19 @@ the app has to be right about them rather than about the spec.
   fixed header offset, sanitised to `A-Z a-z 0-9 space _ -`. On a Game Boy Color
   cartridge the code reads fifteen bytes where the title is eleven, so four
   bytes of manufacturer code land in the name: `ZELDA_DIN__AZ7E.gb`.
-- **Game Boy Advance dumps currently get a `.gb` extension.** A platform sniff
-  by extension is wrong today. Read the header.
+- **The extension is a hint and not an authority.** This was written when the
+  core wrote every dump as `.gb`. It no longer does: on a card dumped 2026-08-26
+  and -27 all seventeen dumps carry `.gb`, `.gbc` or `.gba`, and all seventeen
+  agree with the extension No-Intro gives the same file. That is worth knowing
+  and it is not worth trusting. The core derives Game Boy from Game Boy Color
+  by reading the CGB flag at `0x143`, and **No-Intro's split is an editorial
+  judgement rather than a header bit** - the Game Boy DAT holds *Pokemon -
+  Yellow Version ... (CGB+SGB Enhanced)* and the Game Boy Color DAT holds
+  *Pokemon - Gold Version (USA, Europe) (SGB Enhanced) (GB Compatible)*, so the
+  flag is wrong in both directions. Neither cartridge is on this card, which is
+  not the same as there being no such case. Hash the bytes and let the DAT that
+  contains the hash decide; see *Cheats, and why the enrichment is what makes
+  it work*.
 - **Collisions destroy data and the app cannot prevent it.** Link's Awakening
   and Link's Awakening DX both title themselves `ZELDA`, both produce
   `ZELDA.gb`, and the second silently overwrote the first on a real card. The
@@ -571,6 +582,121 @@ The automatic popup after an install with problems (`install_core()` calls
 the dialog exists at all: a core installed onto a card with no boot ROM shows up
 in the Pocket's menu and then refuses to start anything, which reads as a broken
 install rather than a missing file.
+
+## The core bar line has outgrown one line
+
+Not dump work either, and in here for the same reason as the boot ROM dialog:
+it is the same bar, it is the same kind of fault, and the dumping core is what
+tips it over.
+
+`core.describe()` builds one string naming every installed core and its version,
+then appends whether anything is out of date. Measured against a real card
+carrying all four cores:
+
+| State | Length |
+|---|---|
+| offline, no release data | 94 |
+| everything current | 106 |
+| three of four behind | 149 |
+
+That last one is `Pocket core: kroy.GBC 1.4.0-cheats.10, kroy.GB
+1.4.0-cheats.10, kroy.GBA 0.6.4, kroy.PCE 0.2.2  update available: 9.9.9
+(kroy.GB, kroy.GBA)`, in a single-line `ttk.Label` in a grid cell, in a window
+whose minimum width is 1100 pixels.
+
+**The dumper is the fifth core and it is already on the card.** That same card
+carries `kroy.CartTools 0.0.1.41e8d8a`, which is thirty characters with its
+separator and pushes the worst case past 190. The line does not wrap; it runs
+out of window.
+
+The length is the symptom. The fault is that one label answers two questions
+that both grow with the number of cores: *what have I got* and *is any of it
+stale*. The first is a table, and the app already has that table - `CoresDialog`
+shows a row per core with what the card has beside what is available, which is
+strictly better than the same data comma-separated. Only the second question
+belongs on a status bar.
+
+So the bar should stop enumerating and say what needs attention:
+
+```
+Pocket core: 5 installed, all up to date
+Pocket core: 5 installed, 2 updates available
+Pocket core: not installed. Nothing written here has any effect until it is.
+```
+
+Length no longer grows with the number of cores, the **Cores...** button beside
+it already opens the thing that answers "which two", and the version strings -
+which are the long part, and are `1.4.0-cheats.10` and `0.0.1.41e8d8a` - move to
+the column that exists to be compared against another version.
+
+Two things to keep while changing it:
+
+- **The three states are different and must stay different.** No card, no core
+  installed, and cores installed are distinct answers, and "not installed"
+  keeps its sentence explaining that nothing written has any effect. That
+  sentence is the most important text in the window on a stock card.
+- **`bad` still drives the colour.** The label goes red on a problem, and
+  whatever replaces the string must return the same flag.
+
+The core ids also stop being shown, which is a small improvement in itself:
+`kroy.GBC` is a directory name, and the dialog already gives the cores their
+titles.
+
+## The corpus to hold it to
+
+There is a real card, and everything above can be checked against it rather than
+argued about. `/Assets/carttools/common/` on it holds seventeen dumps written by
+the core on 2026-08-26 and -27, and **all seventeen identify against the
+No-Intro DATs by SHA-1, with no near-misses and no ambiguity.** That is the
+acceptance test for prongs 1 to 3: same card, same seventeen answers.
+
+| On the card | What the DAT calls it |
+|---|---|
+| `BOMBERMAN_GB.gb` | Bomberman GB (Japan) (SGB Enhanced) |
+| `BOMBER_BOY.gb` | Bomber Boy (Japan) (En) |
+| `GBAZELDA_MC.gba` | Legend of Zelda, The - The Minish Cap (USA) |
+| `GOLDEN_SUN_A.gba` | Golden Sun (USA, Europe) |
+| `MARIOLAND2.gb` | Super Mario Land 2 - 6-tsu no Kinka (Japan) (Rev 2) |
+| `MARIO_S_PICROSS.gb` | Mario no Picross (Japan) (SGB Enhanced) |
+| `MOGURANYA.gb` | Moguranya (Japan) (SGB Enhanced) |
+| `OTHELLO.gb` | Othello (Japan) (En) |
+| `SANGOKUSHI.gb` | Sangokushi - Game Boy Ban (Japan) |
+| `SUPER_MARIOLAND.gb` | Super Mario Land (World) (Rev 1) |
+| `TETRIS.gb` | Tetris (World) (Rev 1) |
+| `TETRIS_FLASH.gb` | Tetris Flash (Japan) (SGB Enhanced) |
+| `TETRIS_PLUS.gb` | Tetris Plus (Japan) (SGB Enhanced) |
+| `UNO2SMALL_WORLD.gb` | Uno 2 - Small World (Japan) (SGB Enhanced) |
+| `ZELDA.gb` | Legend of Zelda, The - Link's Awakening (USA, Europe) |
+| `ZELDA_DIN__AZ7E.gbc` | Legend of Zelda, The - Oracle of Seasons (USA, Australia) |
+| `ZELDA_NAYRUAZ8E.gbc` | Legend of Zelda, The - Oracle of Ages (USA, Australia) |
+
+What it proves, and what it does not:
+
+- **The enrichment argument holds.** `match.best()` is hopeless at `ZELDA.gb`
+  and `GBAZELDA_MC.gba` and good at what the right-hand column says. Renaming
+  is what makes the existing matcher work; nothing here needs new matching.
+- **The fifteen-byte title read is real and visible.** `ZELDA_DIN__AZ7E.gbc`
+  carries four bytes of manufacturer code, exactly as described above.
+- **`.gitkeep` is in that directory.** The reader must skip what is not a dump
+  rather than assume everything in the directory is one.
+- **The three DATs are each necessary.** Two of these are only in Game Boy
+  Advance, two only in Game Boy Color, thirteen only in Game Boy. Loading one
+  DAT identifies a fraction of a real card.
+- **It does not prove the collision flow.** These seventeen have seventeen
+  distinct names, so the case *When something is already there* exists to handle
+  has not happened here. It has to be tested against files made for the purpose.
+- **It does not prove the corrupt-dump path.** Every one of these is a clean
+  read. The two GB dumps corrupted once by a mechanism that never reproduced are
+  not on this card, and **unknown** remains a path that must be exercised
+  deliberately rather than waited for.
+
+The DAT measurements in *The DAT* above were re-checked against the same files
+on 2026-08-27 and are exact: Game Boy 2001 entries with SHA-1 on all of them and
+sha256 on 1920, Parent-Clone 2295 with 876 clone links and no sha256 at all,
+Game Boy Color 2038, Game Boy Advance 3533.
+
+**None of this data may be committed.** The corpus lives on the user's card and
+the DATs in their downloads; tests that use them skip when they are absent.
 
 ## Where it attaches
 
