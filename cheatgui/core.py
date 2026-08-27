@@ -109,11 +109,9 @@ CORES = (
     Core("kroy.GB", "gb", "Game Boy", "kroy.GB_", GBC_REPO,
          (Rom("gb_bios.bin", 256, "DMG BIOS"),
           Rom("sgb_boot.bin", 256, "SGB BIOS"))),
-    # The repository is real and its CI publishes on a tag; it just has no
-    # release yet. That is not the same as the PC Engine's repo=None, and the
-    # difference is why released() asks the release map rather than this field:
-    # nothing is offered for install until there is something at the other end,
-    # and the moment a tag lands it appears with no change here.
+    # This one had no release for a while, and nothing here had to change when
+    # it got one: released() asks the release map rather than this field, so a
+    # core is offered for install the moment a tag lands at the other end.
     Core("kroy.GBA", "gba", "Game Boy Advance", "kroy.GBA_", GBA_REPO,
          (Rom("gba_bios.bin", 16384, "GBA BIOS"),)),
     # Upstream ships as "agg23.PC Engine", with a space in the directory name.

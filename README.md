@@ -18,7 +18,7 @@ TurboGrafx-16 cores.
 >
 > **PC Engine and Game Boy Advance are ahead of their cores.** Neither is
 > released, so files you prepare for them sit on the card until one is. See
-> [PC Engine](#pc-engine--turbografx-16-is-ahead-of-its-core) and
+> [PC Engine](#pc-engine--turbografx-16-came-last) and
 > [Game Boy Advance](#game-boy-advance-writes-two-files).
 
 Three panes: the systems on the card, the games in each, and the cheats for the
@@ -41,13 +41,14 @@ has any effect:
 | Core | Covers | Status |
 |---|---|---|
 | [openfpga-GBC-cheats](https://github.com/kroy-the-rabbit/openfpga-GBC-cheats) | Game Boy, Game Boy Color | released, [download](https://github.com/kroy-the-rabbit/openfpga-GBC-cheats/releases) |
-| [openfpga-GBA-cheats](https://github.com/kroy-the-rabbit/openfpga-GBA-cheats) | Game Boy Advance | built, not released, see [below](#game-boy-advance-writes-two-files) |
-| openfpga-PCE-cheats | PC Engine, TurboGrafx-16 | being built, see [below](#pc-engine--turbografx-16-is-ahead-of-its-core) |
+| [openfpga-GBA-cheats](https://github.com/kroy-the-rabbit/openfpga-GBA-cheats) | Game Boy Advance | released, [download](https://github.com/kroy-the-rabbit/openfpga-GBA-cheats/releases), and see [below](#game-boy-advance-writes-two-files) |
+| [openfpga-pcengine-cheats](https://github.com/kroy-the-rabbit/openfpga-pcengine-cheats) | PC Engine, TurboGrafx-16 | released, [download](https://github.com/kroy-the-rabbit/openfpga-pcengine-cheats/releases), and see [below](#pc-engine--turbografx-16-came-last) |
 
 All three are forks that add a cheat engine to somebody else's core, and each
-keeps its own install notes. Only the first is released, and the app can put it
-on the card for you; the others are listed so that a hand-built copy already on
-a card is reported with its version.
+keeps its own install notes. All three are released now, and **Cores...** in the
+app will fetch and install any of them onto the card for you. The app asks each
+repository what its latest release is rather than being told here, so a core
+that has just been tagged appears without this list having to be edited.
 
 ### Installing it from here
 
@@ -282,12 +283,11 @@ fault: **Cheats enabled** in the core menu is a single global switch.
 
 ---
 
-# PC Engine / TurboGrafx-16 is ahead of its core
+# PC Engine / TurboGrafx-16 came last
 
-**Nothing you send to a PC Engine game does anything yet, because the core is
-still being built.** The difference from a system that is merely unfinished is
-that the codes are already fully readable, so the files you prepare now should
-be right when the core lands.
+The core is released now, so a file written for a PC Engine game takes effect
+like any other. This section is kept because the app reached this system before
+the core did, and one consequence of that order is still visible.
 
 What is settled, and what is not:
 
@@ -298,8 +298,10 @@ What is settled, and what is not:
 * **There is no code store meter**, because the core has not fixed one yet.
   Putting a number on screen that no hardware agrees with is the one thing
   that would be worse than showing none.
-* **The core is not released.** Until it is, the status line says so on every
-  PC Engine game, and a file beside a `.pce` ROM sits there and is ignored.
+* **The core is released**, from
+  [openfpga-pcengine-cheats](https://github.com/kroy-the-rabbit/openfpga-pcengine-cheats),
+  and **Cores...** installs it. A card without it still reports so on every PC
+  Engine game, and a file beside a `.pce` ROM sits there until the core arrives.
 
 Three things are deliberately absent, and none of them is an oversight:
 
