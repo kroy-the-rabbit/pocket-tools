@@ -67,8 +67,8 @@ Pocket core: not installed. Nothing written here has any effect until it is.
 ```
 
 Which core is on the card is read from its own `Cores/<id>/core.json`, and only
-for the two ids the app knows about: a well used card carries a hundred cores
-and opening every one of those to find two costs seconds over USB. That read
+for the four ids the app knows about: a well used card carries a hundred cores
+and opening every one of those to find four costs seconds over USB. That read
 is the first step of the card-reading pass, so it happens behind the same modal
 as everything else rather than adding a freeze of its own.
 

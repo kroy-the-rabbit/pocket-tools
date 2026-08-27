@@ -97,6 +97,11 @@ for the whole list and where each one goes:
 | `gbc_bios.bin` | `Assets/gbc/common/` | 2304 bytes |
 | `gb_bios.bin` | `Assets/gb/common/` | 256 bytes |
 | `sgb_boot.bin` | `Assets/gb/common/` | 256 bytes |
+| `gba_bios.bin` | `Assets/gba/common/` | 16384 bytes |
+
+The PC Engine core is not in that table because it needs no boot ROM at all.
+That is an answer rather than an oversight: there is nothing for you to find,
+and the app never reports anything missing for it.
 
 Dump them from your own hardware, or supply your own copies. A file of the
 wrong size is reported separately from a missing one, because that is the
