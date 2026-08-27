@@ -103,8 +103,6 @@ and unmounts the card. If it fails it says so and leaves the card mounted.
 
 ## macOS
 
-**Untested.** Nobody has run this build. What follows is what should happen.
-
 **These builds are not notarized.** They carry no Apple Developer ID, so
 Gatekeeper refuses them on first launch with "Apple could not verify ... is
 free of malware". That message is about the absence of a signature, not about

@@ -76,8 +76,8 @@ as everything else rather than adding a freeze of its own.
 what to install and a yes/no box that confirmed the decision, which held while
 there was one repository and two cores that always shipped together. There are
 four cores now, from three repositories, released at different times and at
-different versions, and one with no release at all, so "install the core"
-stopped being one question with one answer. The dialog shows a row per core -
+different versions, so "install the core" stopped being one question with one
+answer. The dialog shows a row per core -
 what the card has, what is available, and whether it can be installed at all -
 and hands back exactly what was ticked. A row that cannot be ticked says which
 kind of nothing it is: no tag on a real repository, no repository yet, or no

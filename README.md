@@ -16,9 +16,9 @@ TurboGrafx-16 cores.
 > Back your saves up before using cheats on anything you care about, and read
 > [Cartridges](#cartridges-read-this-part) before using them on one.
 >
-> **PC Engine and Game Boy Advance are ahead of their cores.** Neither is
-> released, so files you prepare for them sit on the card until one is. See
-> [PC Engine](#pc-engine--turbografx-16-came-last) and
+> **Game Boy Advance and PC Engine are SD card only.** Their cores do not
+> support cartridges yet, so cheats for those two go beside a ROM on the card.
+> See [PC Engine](#pc-engine--turbografx-16-came-last) and
 > [Game Boy Advance](#game-boy-advance-writes-two-files).
 
 Three panes: the systems on the card, the games in each, and the cheats for the
@@ -45,10 +45,11 @@ has any effect:
 | [openfpga-pcengine-cheats](https://github.com/kroy-the-rabbit/openfpga-pcengine-cheats) | PC Engine, TurboGrafx-16 | released, [download](https://github.com/kroy-the-rabbit/openfpga-pcengine-cheats/releases), and see [below](#pc-engine--turbografx-16-came-last) |
 
 All three are forks that add a cheat engine to somebody else's core, and each
-keeps its own install notes. All three are released now, and **Cores...** in the
-app will fetch and install any of them onto the card for you. The app asks each
-repository what its latest release is rather than being told here, so a core
-that has just been tagged appears without this list having to be edited.
+keeps its own install notes. All three are released and verified working, and
+**Cores...** in the app will fetch and install any of them onto the card for
+you. The app asks each repository what its latest release is rather than being
+told here, so a newly tagged core appears without this list having to be
+edited.
 
 ### Installing it from here
 
@@ -282,23 +283,17 @@ fault: **Cheats enabled** in the core menu is a single global switch.
 
 # PC Engine / TurboGrafx-16 came last
 
-The core is released now, so a file written for a PC Engine game takes effect
-like any other. This section is kept because the app reached this system before
-the core did, and one consequence of that order is still visible.
-
-What is settled, and what is not:
+The core is released and verified working, so a file written for a PC Engine
+game takes effect like any other. Two things about this system still differ
+from the rest:
 
 * **The codes are read, not carried.** Every published PC Engine cheat is a RAM
   poke, and this app decodes all 397 files in the libretro directory, both of
   the two shapes they come in. What you tick is what gets written, in the same
   form the database already uses.
-* **There is no code store meter**, because the core has not fixed one yet.
-  Putting a number on screen that no hardware agrees with is the one thing
-  that would be worse than showing none.
-* **The core is released**, from
-  [openfpga-pcengine-cheats](https://github.com/kroy-the-rabbit/openfpga-pcengine-cheats),
-  and **Cores...** installs it. A card without it still reports so on every PC
-  Engine game, and a file beside a `.pce` ROM sits there until the core arrives.
+* **There is no code store meter**, because the core does not fix a store
+  size. Putting a number on screen that no hardware agrees with is the one
+  thing that would be worse than showing none.
 
 Three things are deliberately absent, and none of them is an oversight:
 
@@ -315,10 +310,11 @@ nonsense.
 
 # Game Boy Advance writes two files
 
-Game Boy Advance was switched off for a while, because its core had no cheat
-data slot and its codes could not be decoded, so the app was offering a system,
-a game list and a set of checkboxes that could do nothing in either direction.
-Both halves of that have stopped being true and it is back on.
+The core is released and verified working. Game Boy Advance was switched off
+for a while, because its core had no cheat data slot and its codes could not be
+decoded, so the app was offering a system, a game list and a set of checkboxes
+that could do nothing in either direction. Both halves of that stopped being
+true and it is back on.
 
 **Game Boy Advance is SD card only.** Cheats go beside a ROM on the card.
 Cartridges are unsupported until the core supports them.
