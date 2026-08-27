@@ -626,6 +626,10 @@ carrying all four cores:
 | everything current | 106 |
 | three of four behind | 149 |
 
+(That last figure is conservative. It was taken with a synthetic `9.9.9`
+upstream tag; with the release versions the four repositories actually carry it
+is 157.)
+
 That last one is `Pocket core: kroy.GBC 1.4.0-cheats.10, kroy.GB
 1.4.0-cheats.10, kroy.GBA 0.6.4, kroy.PCE 0.2.2  update available: 9.9.9
 (kroy.GB, kroy.GBA)`, in a single-line `ttk.Label` in a grid cell, in a window
@@ -668,6 +672,21 @@ Two things to keep while changing it:
 The core ids also stop being shown, which is a small improvement in itself:
 `kroy.GBC` is a directory name, and the dialog already gives the cores their
 titles.
+
+**Built.** `describe()` counts rather than enumerates, and `ui.py` needed no
+change at all — `refresh_core_label()` already took `(text, bad)` and coloured
+on `bad`. Measured in the same states:
+
+| State | Was | Now |
+|---|---|---|
+| four cores, offline | 94 | 24 |
+| four cores, current | 106 | 40 |
+| four cores, three behind | 157 | 45 |
+| five cores, three behind | 187 | 45 |
+| no core installed | 76 | 76, sentence intact |
+
+The fifth core now costs one digit where it cost thirty characters, which is the
+whole point: the line stopped being a function of how many cores there are.
 
 ## The corpus to hold it to
 
