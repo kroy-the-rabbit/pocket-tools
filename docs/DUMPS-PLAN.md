@@ -450,6 +450,7 @@ look:
 | The SD card | the card root |
 | Cores on the card | `Cores/<id>` |
 | Cartridge cheat files on the card | `Assets/<system>/common/Cartridges/` |
+| Where a boot ROM goes | `Assets/<platform>/common/` |
 | The library, `cart-dumps`, `saves` | new, above |
 
 One small module, used by all of them. It takes a directory, opens it, and never
@@ -468,6 +469,109 @@ Three traps worth writing down before anyone implements it:
   before anything is written. Offer the button only for a directory that is
   there, and never create one as a side effect of being asked to look at it.
 
+## The boot ROM dialog, and the docs that describe it
+
+Adjacent work, not dump work, and in here because it lands on the same pages and
+needs the same new module. It can go in before prong 0 or alongside it.
+
+### What the docs claim that the app does not do
+
+- **`README.md` lists three boot ROMs and there are four.** The table under
+  *Boot ROMs* has `gbc_bios.bin`, `gb_bios.bin` and `sgb_boot.bin`, and stops.
+  `gba_bios.bin` goes in `Assets/gba/common/` and is 16384 bytes; it belongs in
+  that table. The PC Engine needs none, and the table should say so rather than
+  leave it out, because an absence in a list of four cores reads as an
+  oversight instead of an answer.
+- **`docs/CHEATGUI.md` contradicts itself about how many cores there are.** It
+  says the card is read "only for the two ids the app knows about" and then,
+  eight lines later, "There are four cores now, from three repositories". The
+  first is left over from when that was true. The reasoning it carries is still
+  right - a well used card holds a hundred cores and opening every one to find
+  ours costs seconds over USB - so the sentence needs its number corrected, not
+  its argument replaced.
+- **`docs/INSTALL.md` describes the core bar without naming the button.** It
+  says the second line "names any boot ROM the core needs and your card does
+  not have", which is the label; **Boot ROMs...** beside it is what shows the
+  whole list, and the page never mentions it. It also never names a file, so
+  someone reading only INSTALL has no way to know what to go and find.
+
+### The GBA boot ROM is reported by accident
+
+It does appear, and it appears for the wrong reason.
+
+`wanted()` reads the installed core's `data.json` and keeps the slots that have
+both a fixed `filename` and `required`. The GBA core's slot 4 is
+`gba_bios.bin`, 16384 bytes, **`required: false`** - where the Game Boy and
+Game Boy Color cores both mark theirs `required: true`. So the filter keeps
+nothing, `found` is empty, and `found or core.bios` falls through to the table
+in `core.py`, which happens to hold the right file. Delete that table entry and
+the GBA boot ROM silently stops being reported on a card that has the core
+installed.
+
+The core is wrong about itself: `pocket-gba/README.md` says of the same file
+that "the core will not start a game without it". Fixing `required` is a change
+to that repository and is not this plan's to make. What is this plan's to make
+is not depending on the mistake:
+
+**Take the union, not the fallback.** `wanted()` should return the core's
+declared fixed-filename slots *plus* the entries in `core.bios`, deduplicated by
+filename. That keeps the reason the lookup exists - a core that starts wanting a
+new file is reported correctly by an app that predates it - while a core that
+mismarks a file we already know about cannot drop it. The cost is that a core
+which legitimately stops needing a boot ROM keeps being asked for one until the
+table is edited; the table is ours, and that is a one-line edit against a
+failure mode that otherwise looks like a working install and then refuses to
+start anything.
+
+### The dialog itself
+
+`show_roms()` is `messagebox.showwarning("Boot ROMs", rom_advice(survey))`. A Tk
+message box was the right amount of work for one line of text and is the wrong
+container for a table. Concretely, what is wrong with it:
+
+- **The columns do not line up.** `rom_advice()` pads with spaces -
+  `MISSING  gbc_bios.bin  (GBC BIOS, 2304 bytes)` - and a message box renders in
+  a proportional font, so the padding produces ragged text rather than columns.
+- **Tk decides where the lines break.** The box wraps to its own width, so a
+  long entry breaks at an arbitrary point and the continuation starts hard
+  against the left margin, at the same indent as the next entry. Paths break
+  mid-path.
+- **There are no delimiters.** One blank line separates the prose from the list
+  and nothing separates the entries from each other, so four boot ROMs across
+  eight lines read as one paragraph.
+- **The path cannot be selected.** It is the only text in the box anybody needs
+  to act on, and it has to be retyped.
+- **It does not look like the rest of the app**, which is the same complaint
+  that got the Cores dialog rebuilt.
+
+**Rebuild it as a `Toplevel`, on the CoresDialog pattern.** That dialog is the
+model and already solves all five: a `ttk.Treeview`, one row per boot ROM,
+columns for the file, its state, the size wanted and the directory it goes in.
+Tags for the two failures, the way `dead` and `behind` are used there and the
+way the cheat list uses colour for the same three meanings - missing, wrong
+size, present. Prose stays prose, in a `ttk.Label` we wrap ourselves at a fixed
+width rather than one Tk wraps for us.
+
+Two buttons the message box could not have:
+
+- **Open** - the containing directory, through `reveal.py` from *Opening a
+  directory, everywhere*. For a missing file that is `Assets/<platform>/common/`,
+  which may not exist yet; the button is offered only when it does, and never
+  creates it.
+- **Copy path** - for the sandboxed and headless cases where opening a file
+  manager is not available, and for anyone who wants the path in a terminal.
+
+`rom_advice()` composes a display string and has no other caller, so it is
+replaced rather than reused: the dialog should read `Survey.roms` directly and
+render each `RomState` into a row. `describe_roms()` stays as it is - it feeds
+the one-line label on the core bar, which is a different job and is not broken.
+
+The automatic popup after an install with problems (`install_core()` calls
+`show_roms()` when `found.problems()`) opens the same dialog. That path is why
+the dialog exists at all: a core installed onto a card with no boot ROM shows up
+in the Pocket's menu and then refuses to start anything, which reads as a broken
+install rather than a missing file.
+
 ## Where it attaches
 
 | Module | Change |
@@ -480,7 +584,9 @@ Three traps worth writing down before anyone implements it:
 | `nointro.py` *(new)* | parse a DAT of either flavour from its zip, index by SHA-1 |
 | `match.py` | unchanged — it gets a canonical name and does what it already does |
 | `writer.py` | its atomic write pattern is the model for filing a dump |
-| `ui.py` | the approval view; the Cores dialog is the model to follow |
+| `core.py` | `wanted()` takes the union, not the fallback; `rom_advice()` retires |
+| `ui.py` | the approval view, and the boot ROM dialog; the Cores dialog is the model for both |
+| `README.md`, `docs/` | the boot ROM table, the core count, the button INSTALL never names |
 | `tests/` | `test_dumps.py`, `test_nointro.py`, pinned against real files a core wrote |
 
 ## Prongs
@@ -500,6 +606,15 @@ Each stands alone and leaves the app working.
 4. **Cheats.** Auto-mapping through the existing matcher, clone-parent fallback.
 5. **Approve.** The one-at-a-time view. Last, because until the first four are
    right there is nothing worth approving.
+
+Two more that are not part of that sequence and do not wait on it:
+
+A. **The docs.** The boot ROM table, the core count that contradicts itself two
+   paragraphs later, and the button INSTALL describes without naming. No code.
+B. **The boot ROM dialog.** The `wanted()` union first, because it is what makes
+   the dialog's GBA row load-bearing rather than lucky, then the `Toplevel`.
+   Its **Open** button wants `reveal.py`, so it lands after that module exists
+   or grows the button once it does.
 
 ## Gated, and out of scope
 
