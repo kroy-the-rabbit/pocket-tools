@@ -27,13 +27,9 @@ CARD_DIR = "Cartridges"
 # The systems a cartridge can be filed under, in the order they are shown.
 #
 # Not card.ENABLED, and the difference is the point. A system can be listed
-# there and still have no cartridge path. Game Boy Advance and PC Engine are
-# both SD card only: a ROM on the card, with the cheat file written beside it.
-#
-# For PC Engine that is a hardware answer. Analogue do ship a TurboGrafx-16
-# adapter and openFPGA cores genuinely can read physical carts, as the Game Boy
-# support here proves, but that core keeps `cartridge_adapter` at -1 and will
-# not.
+# there and still have no cartridge path: Game Boy Advance and PC Engine are SD
+# card only, and cartridges stay unsupported on both until their cores support
+# them.
 #
 # Keeping a system out of this tuple is what makes its cartridge path
 # unreachable rather than merely unused, so this tuple is the enforcement and

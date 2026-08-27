@@ -205,16 +205,9 @@ With a ROM on the card, none of this applies. The app reads the actual file,
 matches it, tells you which file it picked, and you can check a Game Genie
 compare byte against the ROM itself. A cartridge gives you none of that.
 
-**Cartridges are a Game Boy and Game Boy Color feature here, and nothing else.**
-**Add cartridge...** offers those two and no others. Game Boy Advance and PC
-Engine are SD card only: they read a ROM from the card, the cheat file is
-written beside that ROM, and there is no cartridge path for either.
-
-For PC Engine that is deliberate rather than missing. Analogue do ship a
-TurboGrafx-16 adapter and openFPGA cores genuinely can read physical carts, as
-the Game Boy support here proves, but that core does not: the adapter's
-signalling is undocumented and a HuCard needs more lines than the Game Boy
-scheme spends.
+**Add cartridge...** offers Game Boy and Game Boy Color and nothing else. Game
+Boy Advance and PC Engine are SD card only: cartridges are unsupported on both
+until their cores support them.
 
 ## What goes wrong, and how
 
@@ -312,7 +305,7 @@ Three things are deliberately absent, and none of them is an oversight:
 * **SuperGrafx.** `.sgx` files are not listed. The core drops SuperGrafx to buy
   the room its cheat engine needs, so those ROMs will not run correctly on it.
 * **PC Engine CD.** Not supported by the core this one forks, and not planned.
-* **Cartridges.** SD card only; see above.
+* **Cartridges.** Unsupported until the core supports them. SD card only.
 
 [docs/CHEATGUI.md](docs/CHEATGUI.md) has the detail, including the two code
 shapes and why running either through the Game Boy parser produces confident
@@ -327,10 +320,8 @@ data slot and its codes could not be decoded, so the app was offering a system,
 a game list and a set of checkboxes that could do nothing in either direction.
 Both halves of that have stopped being true and it is back on.
 
-**Game Boy Advance is SD card only.** Cheats go beside a ROM on the card, and
-there is no cartridge path: **Add cartridge...** does not offer it, and nothing
-here writes a cheat file a GBA cartridge would be played with. If you came for
-cheats on a physical GBA cart, this tool is not the one.
+**Game Boy Advance is SD card only.** Cheats go beside a ROM on the card.
+Cartridges are unsupported until the core supports them.
 
 It is also the one system where **the file you pick from is not the file the
 handheld reads**, and that is worth understanding before you look in the folder
@@ -361,9 +352,7 @@ and think something went wrong.
   because the engine expresses "if" as a compare entry followed by the entry it
   guards. The meter counts entries for this system, which is why a cheat can
   cost more than one.
-* **The core is not released.** Until it is, a file beside a `.gba` ROM sits
-  there and is ignored, exactly as on PC Engine.
-* **Cartridges.** Not supported by that core yet.
+* **Cartridges.** Unsupported until the core supports them. SD card only.
 
 ## What it shows
 

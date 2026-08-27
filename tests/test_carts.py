@@ -117,12 +117,11 @@ class CartsTest(unittest.TestCase):
     def test_only_the_game_boys_can_hold_a_cartridge(self):
         """Game Boy Advance and PC Engine are SD card only.
 
+        Cartridges are unsupported on both until their cores support them.
         This tuple is the enforcement, not a display order: a system absent
-        from it has no reachable cartridge path anywhere in the app. Both of
-        the excluded systems read a ROM from the card and take their cheat
-        file beside it, and there is no cartridge for either to be filed
-        under. Pinned because adding a system to card.ENABLED is the natural
-        moment to add it here too, and for these two that would be wrong.
+        from it has no reachable cartridge path anywhere in the app. Pinned
+        because adding a system to card.ENABLED is the natural moment to add
+        it here too, and for these two that would be wrong.
         """
         self.assertEqual(self.carts.PLATFORMS, ("gbc", "gb"))
         for pid in ("gba", "pce"):
