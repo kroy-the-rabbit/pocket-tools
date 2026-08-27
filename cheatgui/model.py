@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The per-game view the UI edits: library cheats plus whatever is installed.
+"""The per-game view the UI edits: cheat-database cheats plus what is installed.
 
 A cheat file on the card may hold cheats that are not in the matched libretro
 entry, because it was hand-written, taken from another source, or matched to a

@@ -481,7 +481,7 @@ look:
 | Where | Path |
 |---|---|
 | Cheat database | `db.store()` |
-| Your own cheat files | `library.local_dir()` |
+| Your own cheat files | `cheatlib.local_dir()` |
 | Settings and remembered choices | `prefs.CONFIG` |
 | The cartridge list | `carts.LIST` |
 | The log, on a windowed build | `say.log_path()` |
@@ -727,12 +727,20 @@ the DATs in their downloads; tests that use them skip when they are absent.
 
 ## Where it attaches
 
+**One rename first.** `library.py` was the libretro cheat index, and this plan
+uses "library" for something else entirely - the directory on the computer where
+dumps and saves are filed. Two modules a single underscore apart, describing
+unrelated things, is a bug waiting to be written, so the cheat index becomes
+`cheatlib.py` and the new module takes `library.py`. The word then means one
+thing in the code and the same thing in the interface.
+
 | Module | Change |
 |---|---|
 | `card.py` | `carttools` into `KNOWN`; into `ENABLED` behind the dumper being public |
 | `carts.py` | version field first; `Cartridge` gains optional ROM hash, game code, dump basename |
 | `dumps.py` *(new)* | read `/Assets/carttools/common/`, hash, identify, file |
-| `library_dir.py` *(new)* | the library path, its layout, and `index.json` |
+| `library.py` *(new)* | the library path, its layout, and `index.json` |
+| `cheatlib.py` | was `library.py`; renamed so the new module could have the word |
 | `reveal.py` *(new)* | open a directory in the file manager; used app-wide |
 | `nointro.py` *(new)* | parse a DAT of either flavour from its zip, index by SHA-1 |
 | `match.py` | unchanged — it gets a canonical name and does what it already does |

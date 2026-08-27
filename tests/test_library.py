@@ -29,9 +29,9 @@ class Env(unittest.TestCase):
         # asks it are imported after the environment is set.
         import importlib
         import prefs
-        import library_dir
+        import library
         self.prefs = importlib.reload(prefs)
-        self.lib = importlib.reload(library_dir)
+        self.lib = importlib.reload(library)
         self.root = os.path.join(self.tmp.name, "library")
 
     def tearDown(self) -> None:

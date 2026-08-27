@@ -29,8 +29,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(1, os.path.join(os.path.dirname(HERE), "cheatgui"))
+import cheatlib  # noqa: E402
 import chtparse  # noqa: E402
-import library   # noqa: E402
 
 NO_LIMIT = 1 << 30
 
@@ -38,7 +38,7 @@ NO_LIMIT = 1 << 30
 def path_for(name: str) -> str:
     if not name.endswith(".cht"):
         name += ".cht"
-    return os.path.join(library.local_dir(), name)
+    return os.path.join(cheatlib.local_dir(), name)
 
 
 def read(path: str) -> list:
@@ -67,7 +67,7 @@ def show(groups: list, start: int = 0) -> None:
 
 
 def cmd_list(_args) -> int:
-    d = library.local_dir()
+    d = cheatlib.local_dir()
     files = sorted(f for f in os.listdir(d) if f.endswith(".cht"))
     print(f"{d}\n")
     if not files:
@@ -88,7 +88,7 @@ def cmd_new(args) -> int:
         src = args.source
         if not os.path.exists(src):
             # a bare name: take it from the database
-            hits = [p for p in library.files_for("gbc")
+            hits = [p for p in cheatlib.files_for("gbc")
                     if os.path.basename(p).lower().startswith(src.lower())]
             if not hits:
                 print(f"no cheat file starts with {src!r}", file=sys.stderr)

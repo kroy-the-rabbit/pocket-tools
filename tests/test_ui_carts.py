@@ -519,16 +519,16 @@ class NoDatabaseTest(CartPaneTest):
         self.saved_db = os.environ.get("POCKET_CHEAT_DB")
         os.environ["POCKET_CHEAT_DB"] = os.path.join(
             self.tmp.name, "no-such-database")
-        import library
-        library.refresh()
+        import cheatlib
+        cheatlib.refresh()
 
     def tearDown(self) -> None:
         if self.saved_db is None:
             os.environ.pop("POCKET_CHEAT_DB", None)
         else:
             os.environ["POCKET_CHEAT_DB"] = self.saved_db
-        import library
-        library.refresh()
+        import cheatlib
+        cheatlib.refresh()
         super().tearDown()
 
     def test_the_card_still_lists(self):

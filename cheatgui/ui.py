@@ -20,9 +20,9 @@ from tkinter import messagebox, ttk
 import card as card_mod
 import carts
 import cheatfile
+import cheatlib
 import core as core_mod
 import db
-import library
 import meter
 import model
 import timing
@@ -455,7 +455,7 @@ class App(ttk.Frame):
         _, state, remote = result
         self.remote = remote
         # The index is built from the files that were just replaced.
-        library.refresh()
+        cheatlib.refresh()
         self.refresh_db_label()
         self.status.config(
             text=f"cheat database updated: {state['files']} files, "
@@ -969,7 +969,7 @@ class App(ttk.Frame):
         self.worker.submit(load, self._loaded, "load")
 
     def _loaded(self, view, err) -> None:
-        if isinstance(err, library.MissingDatabase):
+        if isinstance(err, cheatlib.MissingDatabase):
             # Not worth a dialog. This is the state a freshly downloaded build
             # starts in, it is not a failure, and the fix is one button away.
             self.status.config(
@@ -1043,7 +1043,7 @@ class App(ttk.Frame):
             return
         if v.source:
             marks = []
-            if library.is_local(v.source):
+            if cheatlib.is_local(v.source):
                 marks.append("yours")
             if v.pinned:
                 # otherwise a remembered choice silently beats a file you just

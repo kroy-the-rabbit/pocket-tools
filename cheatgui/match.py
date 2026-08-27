@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 
-import library
+import cheatlib
 
 # Tags that say nothing about which game this is.
 _PAREN = re.compile(r"\([^)]*\)|\[[^]]*\]")
@@ -46,7 +46,7 @@ class Candidate:
     @property
     def local(self) -> bool:
         """One of yours, rather than from the libretro database."""
-        return library.is_local(self.path)
+        return cheatlib.is_local(self.path)
 
     @property
     def name(self) -> str:
@@ -101,7 +101,7 @@ def rank(rom_name: str, platform: str, limit: int = 8) -> list[Candidate]:
 
     kept: list[tuple[float, str, str]] = []      # (score, path, tags-form)
     threshold = 0.0
-    for path, cand, cand_full in _index(library.files_for(platform)):
+    for path, cand, cand_full in _index(cheatlib.files_for(platform)):
         if cand == target:
             score = 1.0
         elif cand.startswith(target) or target.startswith(cand):

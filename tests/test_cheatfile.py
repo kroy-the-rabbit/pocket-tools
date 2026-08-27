@@ -189,12 +189,12 @@ class GameBoyAdvanceIsReadNotGuessed(unittest.TestCase):
 class SearchDirectories(unittest.TestCase):
     def test_gba_never_matches_a_game_boy_file(self):
         """A near miss between GB and GBC is useful. GB against GBA is not."""
-        import library
-        self.assertEqual(library.SEARCH["gba"], ("gba",))
-        self.assertIn("gb", library.SEARCH["gbc"])
-        self.assertIn("gbc", library.SEARCH["gb"])
-        self.assertNotIn("gba", library.SEARCH["gb"])
-        self.assertNotIn("gba", library.SEARCH["gbc"])
+        import cheatlib
+        self.assertEqual(cheatlib.SEARCH["gba"], ("gba",))
+        self.assertIn("gb", cheatlib.SEARCH["gbc"])
+        self.assertIn("gbc", cheatlib.SEARCH["gb"])
+        self.assertNotIn("gba", cheatlib.SEARCH["gb"])
+        self.assertNotIn("gba", cheatlib.SEARCH["gbc"])
 
 
 if __name__ == "__main__":
