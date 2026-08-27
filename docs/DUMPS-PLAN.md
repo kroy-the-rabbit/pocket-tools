@@ -1,0 +1,523 @@
+# Cartridge dumps: identifying, naming and filing what the dumper wrote
+
+**Status: plan. Nothing here is built.** This is app work only. Nothing in this
+document changes the dumper core, and nothing here writes to a cartridge. The
+core reads cartridges and writes files to the SD card; this app reads those
+files and tidies up after them. That split is not ours to renegotiate — it is
+stated in `pocket-cartridge/docs/COMPANION-APP-PLAN.md` and repeated here
+because every decision below follows from it.
+
+## Two different things called "cartridge"
+
+The app already has a cartridge feature and this is not it. Keeping them
+separate in the head is most of the work of keeping them separate in the code.
+
+**Cartridge play** is what `carts.py` does today. A cartridge is in the slot,
+the Pocket is playing it, and no file on the card represents it. You type its
+name yourself, the app files a `.cht` under `Assets/<system>/common/Cartridges/`,
+and you browse to that file from the core menu. Nothing is identified: the app
+never sees the cartridge and takes your word for what it is. Game Boy and Game
+Boy Color only.
+
+**Cartridge dumps** are what this document is about. The dumper core has read a
+cartridge and written a ROM image to the card. That image is bytes, so it can be
+hashed, identified, named correctly, and matched to a cheat file the same way a
+ROM on the card is. Nothing is taken on trust.
+
+The difference that matters: **a dump has an identity and a played cartridge
+does not.** Everything below exists because of that.
+
+## What the core actually leaves us
+
+Not what its file-format document describes. These are the observed facts, and
+the app has to be right about them rather than about the spec.
+
+- Dumps land **flat** in `/Assets/carttools/common/`, not in the `Dumps/`,
+  `Saves/`, `Metadata/` tree `FILE-FORMATS.md` lays out. That tree is planned;
+  nothing has written it.
+- **There is no sidecar.** `.cart.json` is fully specified and nothing emits it.
+  Every field the app wants — title, mapper, sizes, checksums — comes from the
+  ROM bytes or comes from nowhere.
+- **The filename is close to worthless.** It is the cartridge title read from a
+  fixed header offset, sanitised to `A-Z a-z 0-9 space _ -`. On a Game Boy Color
+  cartridge the code reads fifteen bytes where the title is eleven, so four
+  bytes of manufacturer code land in the name: `ZELDA_DIN__AZ7E.gb`.
+- **Game Boy Advance dumps currently get a `.gb` extension.** A platform sniff
+  by extension is wrong today. Read the header.
+- **Collisions destroy data and the app cannot prevent it.** Link's Awakening
+  and Link's Awakening DX both title themselves `ZELDA`, both produce
+  `ZELDA.gb`, and the second silently overwrote the first on a real card. The
+  documented `_2`/`_3` suffix scheme has never shipped.
+
+That last one sets the app's real job. The core cannot list a directory, so it
+cannot deduplicate, cannot rename, and cannot recover from a mess. **The app is
+the only component that can, and it is also the only component that ever sees
+the bytes after they land on the card.**
+
+## The DAT: what to download, and why we do not ship it
+
+Identification needs No-Intro's data. **We do not redistribute it.** It is their
+work, their terms, and their site gates downloads; bundling a copy would be
+taking it. The app asks for a file the user fetched themselves, and says so
+plainly when it is missing.
+
+From <https://datomatic.no-intro.org/>, Download section, **defaults left
+alone**, one file per system:
+
+| System |
+|---|
+| Nintendo - Game Boy |
+| Nintendo - Game Boy Color |
+| Nintendo - Game Boy Advance |
+
+Three separate downloads: No-Intro treats them as three systems, and the split
+is real — every Game Boy Color title checked against the Game Boy DAT is absent
+from it, and found in the Game Boy Color one. Each arrives as a zip containing one `.dat`, which is XML. The app
+should accept the zip as downloaded, not require the user to extract it.
+
+All three are wanted before the feature is much use, but any one of them works
+on its own for the systems it covers. A missing DAT should read as "no Game Boy
+Color data loaded", not as a failure.
+
+**Take either the Standard or the Parent-Clone DAT.** The site offers both plus
+a DB Export, and people will click whichever button they land on. Refusing a
+perfectly good file over a flavour label would be obnoxious, and the app can
+tell them apart in one line: Parent-Clone names the parent in `cloneof`,
+Standard points at it with a numeric `cloneofid` that resolves against each
+game's `id`. Both express the same graph; the second needs one dictionary built
+while parsing.
+
+Measured on the real Game Boy exports of 2026-08-27, both at the same version:
+
+| | entries | crc/md5/sha1 | sha256 | clone link | regions |
+|---|---|---|---|---|---|
+| Standard | 2001 | 100% | 96% | `cloneofid`, numeric | none |
+| Parent-Clone | 2295 | 100% | 0% | `cloneof`, by name | 1963 |
+| DB Export | 2333 | 100% | 100% | `clone` + `regparent` | full blocks |
+
+The 294-entry gap is not a format difference. Compared by hash, Parent-Clone
+holds 298 entries Standard does not and Standard holds 4 that Parent-Clone does
+not, and the 298 are aftermarket and unlicensed homebrew — *Linea, La (World)
+(Aftermarket) (Unl)*, *14 Juillet*, *Sam Mallard*. Parent-Clone is the wider
+net, so **prefer it if you dump homebrew**, and otherwise it does not matter.
+
+DB Export carries much more — development status, categories, languages,
+licensed and aftermarket flags — in a different schema at four times the size,
+and none of it is needed to identify or name a dump. A later enrichment, not a
+requirement.
+
+**Match on SHA-1.** It is the only hash present in every entry of every flavour.
+sha256 is 96% of the Standard Game Boy DAT, 41% of Game Boy Color, 30% of Game
+Boy Advance, and entirely absent from Parent-Clone, so anything keyed on it
+fails on real data rather than failing loudly.
+
+An entry looks like this, and the shape is the whole reason this is tractable:
+
+```xml
+<game name="[BIOS] ... Boot ROM (Japan) (En)"
+      cloneof="[BIOS] ... Boot ROM (World) (Rev 1)">
+  <rom name="....gb" size="256" crc="c2f5cc97" sha1="8bd501e3..." status="verified"/>
+</game>
+```
+
+`<rom name>` is `<game name>` plus the extension. **Identifying a dump is
+therefore the same operation as naming it** — there is no naming convention to
+implement, no tag ordering to get right. The DAT hands over the filename.
+
+**Use that name verbatim, extension included.** Do not rebuild it from the game
+name and the system, because the extension is not a property of the system: the
+Game Boy Advance DAT contains three entries ending `.bin` and two ending `.gbc`,
+all of them boot ROMs rather than cartridges. Taking the name as given costs
+nothing and handles those without a special case.
+
+## Identity, and a verification the core cannot do
+
+The app computes SHA-1 over the ROM bytes and looks it up. Three outcomes, and
+the third is not an error:
+
+- **match** — one entry. The dump is that game, and its canonical name is known.
+- **unknown** — no entry. A bad dump, a revision the DAT lacks, or a
+  reproduction cartridge. The app cannot tell these apart and must not pretend
+  to. It says unknown and offers nothing automatic.
+- **mismatch** — size or CRC32 disagree with the entry the SHA-1 found. Should
+  not happen; if it does, something is wrong with the file or the DAT.
+
+The app also computes **CRC32**, which the core displayed on screen at dump
+time. If they disagree, bytes changed between the FPGA and the file on the card.
+That is read-back verification, which the dumper explicitly cannot do — its
+checksums cover bytes *leaving* the reader, and there is no flush confirmation
+that anything reached the card. The app is the only place this check can happen,
+it costs one pass over a file already being read, and it should be reported
+whenever the core's CRC32 is known.
+
+Two GB dumps were corrupted once by a mechanism that never reproduced and is
+not proven fixed. An index built from card contents can be wrong even where
+every on-device check passed. Nothing here should present identification as
+proof the dump is good.
+
+## The store
+
+**Not SQLite.** One versioned JSON file, `index.json`, written with the same
+atomic replace `prefs.py` uses, holding a row per dump keyed by SHA-1.
+
+It lives **in the library, not with the config**, unlike `prefs.json` and
+`cartridges.json`. The library is what it describes, so the two travel together:
+copying the library copies its index, and moving the library to another machine
+does not strand it. That is the export and the backup — there is no separate
+feature, because the file is already a plain file in the directory the user
+already keeps.
+
+It is a **cache, not a source of truth.** The rule from the companion-app plan
+is that the file on the card is the state and the app must not keep a private
+database the card can disagree with. Here that means: **deleting `index.json`
+must lose nothing but time.** A rebuild walks the library, re-hashes what it
+finds, and asks the DAT again. Anything that cannot survive that — an approval,
+a rejection, a user's cheat override — is a decision, not an observation, and
+decisions belong in `prefs.py` where the app already keeps them.
+
+That split is the whole design of the store. Observations are disposable and
+recomputable; decisions are small, and kept.
+
+A row is keyed by **SHA-1**, never by filename. `prefs.get_source()` keys on
+basename today, which is exactly the thing that collides across two different
+cartridges; the dump index cannot reuse it.
+
+`cartridges.json` gains a version field before anything else touches it. It has
+none, and the existing plan flags migration as an open question.
+
+## The library
+
+**On the computer, chosen once, remembered in `prefs.py`.** The app does not
+invent a path and does nothing until one is set: `~/.local/share/pocket-cheats/`
+holds the cheat database, but that is a cache the user never opens, and these
+are files they will want to find.
+
+It is not only for dumps. Save backup is coming to the dumper, and when it
+arrives the app's job is dated, immutable, off-card copies — many per cartridge,
+kept forever, never auto-deleted. That is a different shape from ROMs, where
+there is one file per cartridge and re-dumping produces the same bytes. **The
+layout has to have room for saves now, or filing every dump twice is a migration
+later.**
+
+```
+<library>/
+    roms/                     canonical No-Intro names, extension and all
+    cart-dumps/               originals, under the names the core gave them
+    saves/                    dated, immutable, one directory per cartridge
+    index.json                the store; delete it and it rebuilds
+```
+
+**No per-system directories.** The extension already tells a cartridge dump
+apart, and after enrichment it is right: all 2295 entries in the Game Boy DAT
+name their rom `.gb`, all 2038 in Game Boy Color `.gbc`, and 3528 of 3533 in
+Game Boy Advance `.gba` — the five exceptions being boot ROMs, which nobody
+dumps out of a cartridge slot. The canonical name carries the extension, so
+renaming the dump is what fixes it, including the core's current habit of
+writing Game Boy Advance dumps as `.gb`.
+
+Splitting by system would encode that fact a second time, in the path, where it
+could disagree with the filename. One authority is better than two, and the
+extension is the one the rest of the world already reads.
+
+`cart-dumps` is separate because those names are *not* trustworthy — that is the
+whole point of keeping them. `saves` is separate because a save belongs to a
+cartridge and there will be many of them for one ROM.
+
+Nothing under `saves/` is built by this plan — the core cannot back a save up
+yet. The directory is named here so that when it can, nothing above it moves.
+
+**What goes inside it is a later plan, deliberately.** The top level has to be
+settled now, because filing dumps into a layout that later needs a `saves/`
+alongside them is a migration. The shape *within* `saves/` does not: nothing
+writes there, so there is nothing to migrate, and the sensible time to decide
+whether a cartridge's backups sit in a directory of their own or under a flat
+dated naming scheme is when there is a real `.sav` from a real cartridge to look
+at. Deciding it now would be guessing about a file format that does not exist,
+and the guess would be load-bearing by the time anyone could check it.
+
+## The one-click flow
+
+For each dump, in order, with nothing happening until it is approved:
+
+1. Hash it. SHA-1 for identity, CRC32 for corroboration.
+2. Read the header for platform. Not the extension — GBA dumps are `.gb` today.
+3. Look up the SHA-1 in that system's DAT.
+4. **Copy** to the canonical name under `roms/`.
+5. **Move the original** to `cart-dumps`, keeping the core's own filename, and
+   removing it from the card only after the copy is verified and confirmed, so the flat pile in `/Assets/carttools/common/` empties as it is
+   processed and what remains on the card is what still needs attention.
+6. Enrich: record the No-Intro name, region, clone parent, hashes and sizes.
+7. Match to a cheat file and offer it.
+
+Both destinations are on the computer, so step 5 crosses a filesystem: it is a
+copy followed by a delete, not a rename, and it is not atomic.
+
+**Nothing is removed from the card until a byte-for-byte comparison passes.**
+Not a re-hash — the bytes, compared. A hash match is a statement about a digest;
+this is the only destructive step in the feature, and the check in front of it
+should be the strongest one available rather than the cheapest. Both files are
+already being read, and the comparison stops at the first difference.
+
+Then the app says where the copy went and asks:
+
+```
+Backed up to  <library>/cart-dumps/ZELDA.gb          [Open]
+Verified byte for byte against the card.
+
+Remove ZELDA.gb from the card?                [Keep]  [Remove]
+```
+
+The path is shown, not described, and **[Open]** opens the containing directory
+in the file manager — the same per-platform shell command shape `card.py`
+already uses for eject. Someone about to agree to a deletion should be able to
+go and look at the thing that replaces it, in one click, before they answer.
+
+The directory, not the file. Revealing the file itself means a different
+argument on every platform for no useful difference: the answer to "did it
+land" is the directory listing, and the directory is also what the user wants
+open when they go looking for the other dumps they have already filed. This is
+not a dumps feature; see *Opening a directory, everywhere* below.
+
+The confirmation is not a preference to be switched off. It is asked because the
+answer is occasionally no, and a card pulled at any point before **[Remove]**
+costs nothing worse than a dump that is still on it.
+
+That leaves two files per dump: the canonical one you use, and the original
+under the name the core gave it. The second is provenance — it is the evidence
+of what the dumper actually produced, and it is the only thing that can settle a
+later argument about whether a bad name came from the core or from us. For a
+32 MB Game Boy Advance cartridge it is also 32 MB, twice.
+
+Step 5 is what makes the collision hazard survivable. Emptying the card as dumps
+are filed means the next dump of a differently-titled cartridge has nothing to
+overwrite. It also means the archive outlives the card, which reformatting or
+losing the card does not.
+
+## Cheats, and why the enrichment is what makes it work
+
+`match.best(rom_name, platform)` already matches a ROM filename to a libretro
+cheat file by fuzzy title, and libretro's cheat filenames follow No-Intro's
+naming. It is good at `Legend of Zelda, The - Link's Awakening (USA, Europe)`
+and hopeless at `ZELDA.gb`.
+
+So the enrichment is not cosmetic. **Renaming the dump is what makes the
+existing matcher work on it**, with no new matching code:
+
+```
+ZELDA.gb  ->  SHA-1  ->  "Legend of Zelda, The - Link's Awakening (USA, Europe)"
+          ->  match.best()  ->  the cheat file, already correct
+```
+
+The DAT that matched also says which system the dump is, which is the other
+thing `match.best()` needs. Game Boy and Game Boy Color are one platform to the
+dumper and two cheat directories to libretro, and **the ROM header cannot tell
+them apart.** That is not a shortcut being taken; it is a fact about how
+No-Intro splits the two, and it is worth stating because the obvious approach is
+wrong.
+
+The tempting answer is the CGB flag at `0x143`, which says whether a cartridge
+is Game Boy Color enhanced. It does not answer this question. No-Intro's split
+is an editorial judgement about which system a game is *for*, and cartridges
+that run on both machines land on both sides of it. The two DATs say so in their
+own entry names:
+
+```
+Game Boy        Pokemon - Yellow ... (CGB+SGB Enhanced)
+Game Boy Color  Pokemon - Gold Version (USA, Europe) (SGB Enhanced) (GB Compatible)
+```
+
+Yellow is a Game Boy game that is colour-enhanced. Gold is a Game Boy Color game
+that is Game Boy compatible. Both run on both machines, both would set the same
+bit, and they are in different DATs. A header bit cannot reproduce a decision
+that was never made from the header.
+
+So the lookup goes across every DAT that is loaded, and the one that contains
+the hash decides. A dump is in exactly one of them. That single answer gives the
+canonical name, the extension and the libretro cheat directory together, and
+there is no second mechanism that could disagree with it.
+
+This also means the app should say which DATs it has when it reports an unknown
+dump. "Not found" means something different with one DAT loaded than with three,
+and the user is the only one who can fix the difference.
+
+A dump gets its cheat mapped **by default**, because by the time it is matched
+it has a name the matcher was built for. Where a clone has no cheat file of its
+own, the parent's name is the obvious second attempt — `cloneof` in a
+Parent-Clone DAT, `cloneofid` resolved against `id` in a Standard one.
+
+The user can always override, and an override is remembered, exactly as it is
+for a ROM today.
+
+## Approval, one at a time
+
+Nothing is bulk. Each dump is presented on its own with what was found, what
+would be done, and what it would be called, and nothing is written until it is
+approved. A dump that identifies cleanly still asks.
+
+The reason is step 5. Moving a file is not something to do to a pile at once on
+the strength of a fuzzy match, and the failure mode of a wrong automatic answer
+here is a dump filed under another game's name — which is exactly the confusion
+the whole feature exists to remove.
+
+Rejecting leaves everything untouched and records the rejection, so the next run
+does not ask again.
+
+## Doing nothing twice
+
+Idempotency is keyed on SHA-1, and it is the reason the index exists at all:
+
+- A dump whose SHA-1 is already filed is skipped, silently. Re-dumping the same
+  cartridge produces the same bytes and needs no second decision.
+- A dump previously rejected is skipped, and re-offered only when asked.
+- A dump whose SHA-1 is known but whose file is gone is reported, not deleted.
+  The app does not remove things it did not just write.
+- Re-running over a fully processed card does nothing and says so.
+
+Same bytes, same answer, no work. That is the whole rule.
+
+## When something is already there
+
+Two different things get called a collision, and only one of them is a decision.
+
+**The card already lost a dump.** Two cartridges titled the same, the second
+overwrote the first, and this happened before the app ever saw the card. There
+is nothing to recover: the bytes are gone and no flow brings them back. The app
+can notice — the surviving file's SHA-1 identifies one game and not the other —
+and it should say so plainly, once, and then stop talking about it. It is a fact
+about the past, not a question.
+
+**The name the app is about to write is taken.** This is the decision, and it
+happens constantly rather than rarely, because the core's own names collide by
+design: every `ZELDA.gb` original lands in `cart-dumps` under the same name.
+
+First, hash what is already there. That settles most of it without asking:
+
+- **Same SHA-1.** The same bytes are already filed. Nothing to do, nothing to
+  ask, and this is the ordinary case when a cartridge is dumped twice. Skip.
+- **Unreadable.** Report it and move on. The app does not overwrite a file it
+  could not read, because it cannot tell what it would be destroying.
+- **Different SHA-1.** Two files, one name, different contents. Ask.
+
+Three answers, and the app should say what each one costs:
+
+```
+Zelda (USA).gb is already in your library, with different contents.
+
+  Already there   1 048 576 bytes   sha1 8bd501e3...   filed 2026-08-21
+  This dump       1 048 576 bytes   sha1 a4f9c210...
+
+  [Keep both]   file this one as Zelda (USA) [a4f9c210].gb
+  [Replace]     file this one, then delete the old
+  [Discard]     leave the library alone; this dump stays on the card
+```
+
+**Keep both** is the default, and the suffix is a short SHA-1 prefix rather than
+`_2`. The core's own file-format notes warn that a consumer must not read `_2`
+as meaning a second revision rather than a second cartridge, and they are right:
+a counter records the order files arrived, which is not a fact about either
+file. A hash prefix is a fact about the contents, it is stable across machines
+and reruns, and two files that differ can never be given the same one.
+
+**Replace** writes the new file first and deletes the old only once the new one
+is in place — the same order as everything else here, for the same reason. The
+old file is not moved to `cart-dumps`; it was never a card original, and putting
+it there would put an untrustworthy name next to names that mean something.
+
+**Discard** leaves the library untouched and leaves the dump on the card, which
+means it will be offered again next time. That is deliberate: discarding is not
+the same as rejecting, and a decision the user has not really made should come
+back rather than be remembered as settled.
+
+If the user has told the app to stop asking about a particular dump, that is a
+rejection, and it lives in `prefs.py` with the other decisions rather than in
+the index.
+
+## Opening a directory, everywhere
+
+**Anywhere the app names a location, it should offer to open it.** The app
+already knows a dozen paths and shows several of them as text the user is
+expected to copy out and paste into a file manager. That is a chore the app can
+do in one click, and every one of these is a place someone eventually needs to
+look:
+
+| Where | Path |
+|---|---|
+| Cheat database | `db.store()` |
+| Your own cheat files | `library.local_dir()` |
+| Settings and remembered choices | `prefs.CONFIG` |
+| The cartridge list | `carts.LIST` |
+| The log, on a windowed build | `say.log_path()` |
+| The SD card | the card root |
+| Cores on the card | `Cores/<id>` |
+| Cartridge cheat files on the card | `Assets/<system>/common/Cartridges/` |
+| The library, `cart-dumps`, `saves` | new, above |
+
+One small module, used by all of them. It takes a directory, opens it, and never
+raises: failing to open a file manager is not worth an exception, in the same
+way and for the same reason that `say.py` will not raise over a line it cannot
+print.
+
+Three traps worth writing down before anyone implements it:
+
+- **`explorer.exe` returns a non-zero exit code on success.** Treating that as
+  failure is the classic way to get a working feature that reports an error.
+- **A sandboxed build has no file manager to call.** Under Flatpak or Snap the
+  platform command may not exist or may be intercepted by a portal; the button
+  should quietly not appear rather than appear and fail.
+- **A path that does not exist yet.** The library before it is chosen, the log
+  before anything is written. Offer the button only for a directory that is
+  there, and never create one as a side effect of being asked to look at it.
+
+## Where it attaches
+
+| Module | Change |
+|---|---|
+| `card.py` | `carttools` into `KNOWN`; into `ENABLED` behind the dumper being public |
+| `carts.py` | version field first; `Cartridge` gains optional ROM hash, game code, dump basename |
+| `dumps.py` *(new)* | read `/Assets/carttools/common/`, hash, identify, file |
+| `library_dir.py` *(new)* | the library path, its layout, and `index.json` |
+| `reveal.py` *(new)* | open a directory in the file manager; used app-wide |
+| `nointro.py` *(new)* | parse a DAT of either flavour from its zip, index by SHA-1 |
+| `match.py` | unchanged — it gets a canonical name and does what it already does |
+| `writer.py` | its atomic write pattern is the model for filing a dump |
+| `ui.py` | the approval view; the Cores dialog is the model to follow |
+| `tests/` | `test_dumps.py`, `test_nointro.py`, pinned against real files a core wrote |
+
+## Prongs
+
+Each stands alone and leaves the app working.
+
+0. **Choose a library.** The path, the layout, `index.json` and its rebuild.
+   Nothing else can start without somewhere to put things, and getting the
+   layout right before there are files in it is the difference between a
+   decision and a migration.
+1. **Read.** Walk the directory, hash, read headers, list what is there. No
+   writes. Answers "what is on this card" before anything moves.
+2. **Identify.** DAT loading, the missing-DAT message, SHA-1 lookup, and the
+   CRC32 cross-check. Still no writes.
+3. **File.** The index, the copy, the move, idempotency. The first prong that
+   touches the card, and the one to hold to real files.
+4. **Cheats.** Auto-mapping through the existing matcher, clone-parent fallback.
+5. **Approve.** The one-at-a-time view. Last, because until the first four are
+   right there is nothing worth approving.
+
+## Gated, and out of scope
+
+**Saves and RTC are not built in the core.** Save backup, save restore, GBA
+SRAM/Flash/EEPROM and RTC are all "not started" upstream. No `.sav` has ever
+been written by the dumper. Nothing here should ship UI for them, and platform
+gating follows `card.py`'s `KNOWN`/`ENABLED` pattern driven by what upstream has
+verified, not by what code paths exist.
+
+**Sidecars.** When `.cart.json` starts being written, it is corroboration, never
+a requirement. A dump must remain usable with its metadata deleted.
+
+This is not a ROM manager, not a launcher, and not a second Pocket Sync.
+
+## Open questions
+
+None outstanding for the work this plan covers.
+
+The save layout inside `saves/` is deferred rather than open: see *The library*.
+It is decided when the dumper can produce a save and there is a real file to
+decide against.
