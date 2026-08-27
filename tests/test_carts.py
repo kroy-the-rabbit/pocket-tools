@@ -2,6 +2,7 @@
 """The cartridge list itself: what is filed where, and what a move carries."""
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -126,6 +127,36 @@ class CartsTest(unittest.TestCase):
         self.assertEqual(self.carts.PLATFORMS, ("gbc", "gb"))
         for pid in ("gba", "pce"):
             self.assertNotIn(pid, self.carts.PLATFORMS)
+
+    # ---------------------------------------------------------- the version --
+    def test_the_file_says_which_version_wrote_it(self):
+        """Added before anything else starts reading this file, so that a
+        later change to what a row means has something to test against."""
+        self.carts.add("Wario Land 3", "gbc")
+        with open(self.carts.LIST) as f:
+            self.assertEqual(json.load(f)["version"], self.carts.VERSION)
+
+    def test_a_list_written_before_the_version_existed_is_still_read(self):
+        """This list is what the user typed and cannot be rebuilt from
+        anything, so an unversioned file is read rather than discarded."""
+        os.makedirs(os.path.dirname(self.carts.LIST), exist_ok=True)
+        with open(self.carts.LIST, "w") as f:
+            json.dump({"cartridges": [{"name": "Zelda DX (USA)",
+                                       "platform": "gbc"}]}, f)
+        listed = self.carts.all()
+        self.assertEqual([c.name for c in listed], ["Zelda DX (USA)"])
+        self.assertEqual(listed[0].platform, "gbc")
+
+    def test_an_unversioned_list_carries_the_version_on_the_next_write(self):
+        os.makedirs(os.path.dirname(self.carts.LIST), exist_ok=True)
+        with open(self.carts.LIST, "w") as f:
+            json.dump({"cartridges": [{"name": "Zelda DX (USA)",
+                                       "platform": "gbc"}]}, f)
+        self.carts.add("Wario Land 3", "gbc")
+        with open(self.carts.LIST) as f:
+            data = json.load(f)
+        self.assertEqual(data["version"], self.carts.VERSION)
+        self.assertEqual(len(data["cartridges"]), 2)
 
     def test_a_cartridge_cannot_be_filed_under_a_rom_only_system(self):
         """add() and set_platform() both refuse, not just one of them."""
