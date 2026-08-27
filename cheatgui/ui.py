@@ -1519,7 +1519,10 @@ class RomsDialog(tk.Toplevel):
         self.tree.column("#0", width=190, stretch=False)
         self.tree.column("state", width=170, stretch=False, anchor="center")
         self.tree.column("size", width=110, stretch=False, anchor="center")
-        self.tree.column("where", width=260, stretch=False)
+        # The one column that stretches. A long card path widens the dialog
+        # through the label under the table, and a fixed last column answers
+        # that with dead white space to the right of it.
+        self.tree.column("where", width=260, stretch=True)
         self.tree.grid(row=2, column=0, sticky="ew")
         # The same three meanings the cheat list and the Cores dialog give
         # these colours: a fault, something worth drawing the eye to, and a row
@@ -1527,8 +1530,13 @@ class RomsDialog(tk.Toplevel):
         # size fail differently - one is not there, the other is there and
         # wrong, and the second is the one people stare at without seeing - so
         # they do not share a colour.
+        # Both of these stop the core running, so neither is green. Green is
+        # what CoresDialog uses for an update being available, which is a state
+        # worth acting on and not a fault; borrowing it here would say a boot
+        # ROM of the wrong size is fine. Amber separates the two failures
+        # without claiming one of them is harmless.
         self.tree.tag_configure("missing", foreground="#a00")
-        self.tree.tag_configure("wrong", foreground="#0a6")
+        self.tree.tag_configure("wrong", foreground="#b35c00")
         self.tree.tag_configure("ok", foreground="#999")
 
         # iid -> the whole path to copy. For a file that is there, where it was
