@@ -205,12 +205,16 @@ With a ROM on the card, none of this applies. The app reads the actual file,
 matches it, tells you which file it picked, and you can check a Game Genie
 compare byte against the ROM itself. A cartridge gives you none of that.
 
-PC Engine has no cartridge path at all, and that is deliberate rather than
-missing. Analogue do ship a TurboGrafx-16 adapter and openFPGA cores genuinely
-can read physical carts, as the Game Boy support here proves, but that core
-does not: the adapter's signalling is undocumented and a HuCard needs more
-lines than the Game Boy scheme spends. So **Add cartridge...** offers Game Boy
-and Game Boy Color and nothing else.
+**Cartridges are a Game Boy and Game Boy Color feature here, and nothing else.**
+**Add cartridge...** offers those two and no others. Game Boy Advance and PC
+Engine are SD card only: they read a ROM from the card, the cheat file is
+written beside that ROM, and there is no cartridge path for either.
+
+For PC Engine that is deliberate rather than missing. Analogue do ship a
+TurboGrafx-16 adapter and openFPGA cores genuinely can read physical carts, as
+the Game Boy support here proves, but that core does not: the adapter's
+signalling is undocumented and a HuCard needs more lines than the Game Boy
+scheme spends.
 
 ## What goes wrong, and how
 
@@ -323,7 +327,12 @@ data slot and its codes could not be decoded, so the app was offering a system,
 a game list and a set of checkboxes that could do nothing in either direction.
 Both halves of that have stopped being true and it is back on.
 
-It is the one system where **the file you pick from is not the file the
+**Game Boy Advance is SD card only.** Cheats go beside a ROM on the card, and
+there is no cartridge path: **Add cartridge...** does not offer it, and nothing
+here writes a cheat file a GBA cartridge would be played with. If you came for
+cheats on a physical GBA cart, this tool is not the one.
+
+It is also the one system where **the file you pick from is not the file the
 handheld reads**, and that is worth understanding before you look in the folder
 and think something went wrong.
 

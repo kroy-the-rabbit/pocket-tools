@@ -27,12 +27,17 @@ CARD_DIR = "Cartridges"
 # The systems a cartridge can be filed under, in the order they are shown.
 #
 # Not card.ENABLED, and the difference is the point. A system can be listed
-# there and still have no cartridge path: PC Engine is loaded from the SD card
-# only. Analogue do ship a TurboGrafx-16 adapter and openFPGA cores genuinely
-# can read physical carts, as the Game Boy support here proves, but that core
-# keeps `cartridge_adapter` at -1 and will not. So for PC Engine every
-# cartridge path in this app is dead code rather than merely unused, and
-# keeping it out of this tuple is what makes it unreachable.
+# there and still have no cartridge path. Game Boy Advance and PC Engine are
+# both SD card only: a ROM on the card, with the cheat file written beside it.
+#
+# For PC Engine that is a hardware answer. Analogue do ship a TurboGrafx-16
+# adapter and openFPGA cores genuinely can read physical carts, as the Game Boy
+# support here proves, but that core keeps `cartridge_adapter` at -1 and will
+# not.
+#
+# Keeping a system out of this tuple is what makes its cartridge path
+# unreachable rather than merely unused, so this tuple is the enforcement and
+# not a display order that something else could contradict.
 PLATFORMS = ("gbc", "gb")
 DEFAULT_PLATFORM = "gbc"
 
@@ -97,7 +102,16 @@ def grouped(cartridges: list[Cartridge]) -> list[tuple[str, list[int]]]:
 
 
 def add(name: str, platform: str = DEFAULT_PLATFORM) -> bool:
-    """False if that name is already listed."""
+    """False if that name is already listed.
+
+    Raises for a system with no cartridge path, the same way set_platform
+    does. The two were not symmetric: a cartridge could not be *moved* to
+    Game Boy Advance but could be *created* there, and a row written that way
+    is filed under a system PLATFORMS does not list, so grouped() never yields
+    it and it disappears from the list while still occupying its name.
+    """
+    if platform not in PLATFORMS:
+        raise ValueError(f"unknown platform {platform!r}")
     name = name.strip()
     if not name:
         return False

@@ -114,6 +114,30 @@ class CartsTest(unittest.TestCase):
     def test_removing_something_not_listed_says_so(self):
         self.assertFalse(self.carts.remove("Never Added"))
 
+    def test_only_the_game_boys_can_hold_a_cartridge(self):
+        """Game Boy Advance and PC Engine are SD card only.
+
+        This tuple is the enforcement, not a display order: a system absent
+        from it has no reachable cartridge path anywhere in the app. Both of
+        the excluded systems read a ROM from the card and take their cheat
+        file beside it, and there is no cartridge for either to be filed
+        under. Pinned because adding a system to card.ENABLED is the natural
+        moment to add it here too, and for these two that would be wrong.
+        """
+        self.assertEqual(self.carts.PLATFORMS, ("gbc", "gb"))
+        for pid in ("gba", "pce"):
+            self.assertNotIn(pid, self.carts.PLATFORMS)
+
+    def test_a_cartridge_cannot_be_filed_under_a_rom_only_system(self):
+        """add() and set_platform() both refuse, not just one of them."""
+        for pid in ("gba", "pce"):
+            with self.assertRaises(ValueError):
+                self.carts.add("Some Game", pid)
+        self.carts.add("Aladdin (USA)", "gb")
+        for pid in ("gba", "pce"):
+            with self.assertRaises(ValueError):
+                self.carts.set_platform("Aladdin (USA)", pid)
+
 
 if __name__ == "__main__":
     unittest.main()
