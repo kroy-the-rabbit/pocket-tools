@@ -8,10 +8,10 @@
 > * **Windows** has been run on Windows: it reads a card, writes cheats,
 >   installs the core and ejects. It is also smoke tested under Wine on every
 >   check, which is what catches a build that will not start at all.
-> * **macOS** has not been run at all. It is built, signed and shape checked by
->   CI and nothing more.
+> * **macOS** has been run on macOS and works. It is not notarized, so
+>   Gatekeeper refuses it on first launch until you run the one command below.
 >
-> Please report whatever happens on macOS.
+> Reports from any of the three are still welcome; a card is not a card.
 
 One file per platform, on the
 [releases page](https://github.com/kroy-the-rabbit/pocket-tools/releases).
@@ -23,7 +23,6 @@ database in `~/.local/share/pocket-cheats/`.
 overwrites memory the game saves from. Back up saves you care about first, and
 read the cartridge section of the README before using cheats on a cartridge,
 where the save is on the cartridge and nothing on the card is a copy of it.
-Game Boy Advance support is work in progress and does nothing yet.
 
 On first run there is no cheat database. Press **Update** in the bar along the
 bottom and it fetches one, about 14 MB and a minute. That bar is also where you

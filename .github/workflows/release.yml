@@ -332,12 +332,11 @@ jobs:
             echo '```'
             echo
             echo "**Use at your own risk: cheats can corrupt save files.**"
-            echo "Back up saves you care about. Game Boy Advance support is"
-            echo "work in progress and does nothing yet."
+            echo "Back up saves you care about."
             echo
-            echo "The **macOS build is untested**: built and signed by CI,"
-            echo "never run by anybody. Linux and Windows have both been used"
-            echo "against a real card."
+            echo "All three builds have now been run on the platform they are"
+            echo "for. Linux and Windows have been used against a real card"
+            echo "end to end; the macOS build has been run and works."
             echo
             echo "The macOS build is also **not notarized**. Gatekeeper will"
             echo "refuse it on first launch; see docs/INSTALL.md."
