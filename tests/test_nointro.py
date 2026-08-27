@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""No-Intro DATs: the two flavours, the three outcomes, and the empty result.
+"""No-Intro DATs: the two flavours, the three outcomes, and the named refusal.
 
 Every fixture here is synthetic XML written for these tests. No-Intro's data is
 theirs and is not redistributed, so nothing in the repository is an excerpt of
-it; the shapes below are the schema, with invented games in it. The one test
-that reads a real download is skipped unless that download happens to be on
-the machine, and asserts nothing that would put its contents in this file.
+it; the shapes below are the schema, with invented games in it. The two tests
+that read a real download are skipped unless those downloads happen to be on
+the machine, and assert nothing that would put their contents in this file.
 """
 from __future__ import annotations
 
@@ -90,6 +90,27 @@ DANGLING = """<?xml version="1.0"?>
 </datafile>
 """
 
+# The third button on the same page, which is not a DAT and never parses. Two
+# top-level elements is the whole of what is wrong with it: <header> closes,
+# and the <datafile> that follows it is junk after the document element. The
+# shape is No-Intro's; the game in it is invented, like every other here.
+DB_EXPORT = """<?xml version="1.0" encoding="utf-8"?>
+<header>
+\t<version>20260827-092427</version>
+\t<author>No-Intro</author>
+</header>
+<datafile>
+\t<game name="Widget Quest (World)">
+\t\t<archive number="1" clone="P" regparent="(WORLD PARENT)"\
+ name="Widget Quest" region="World" languages="En" devstatus="Release"/>
+\t\t<source>
+\t\t\t<file forcename="Widget Quest (World).gb" size="131072"\
+ crc="0a0b0c0d" sha1="1111111111111111111111111111111111111111"/>
+\t\t</source>
+\t</game>
+</datafile>
+"""
+
 PARENT = "1111111111111111111111111111111111111111"
 CLONE = "2222222222222222222222222222222222222222"
 BOOTROM = "3333333333333333333333333333333333333333"
@@ -98,11 +119,14 @@ BOOTROM = "3333333333333333333333333333333333333333"
 class DatFile:
     """A fixture on disk, as a zip or as the bare XML the user extracted."""
 
-    def __init__(self, tmp: str, name: str, xml: str, zipped: bool = False):
-        self.path = os.path.join(tmp, name + (".zip" if zipped else ".dat"))
+    def __init__(self, tmp: str, name: str, xml: str, zipped: bool = False,
+                 ext: str = ".dat"):
+        # The extension is a parameter because it is half of what tells a DB
+        # Export apart: its zip holds an .xml where every DAT holds a .dat.
+        self.path = os.path.join(tmp, name + (".zip" if zipped else ext))
         if zipped:
             with zipfile.ZipFile(self.path, "w", zipfile.ZIP_DEFLATED) as zf:
-                zf.writestr(name + ".dat", xml)
+                zf.writestr(name + ext, xml)
         else:
             with open(self.path, "w") as f:
                 f.write(xml)
@@ -114,8 +138,9 @@ class NointroTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
 
     def dat(self, xml: str, name: str = "Nintendo - Game Boy",
-            zipped: bool = False) -> nointro.Dat:
-        return nointro.load(DatFile(self.tmp.name, name, xml, zipped).path)
+            zipped: bool = False, ext: str = ".dat") -> nointro.Dat:
+        return nointro.load(
+            DatFile(self.tmp.name, name, xml, zipped, ext).path)
 
     # ------------------------------------------------------------ flavours --
     def test_both_flavours_give_the_same_entries(self):
@@ -293,6 +318,99 @@ class NointroTest(unittest.TestCase):
         self.assertEqual(len(dat), 2)
         self.assertIn(PARENT, dat.entries)
 
+    # ---------------------------------------------------- the third button --
+    def test_the_db_export_is_named_instead_of_being_nothing(self):
+        # As downloaded: a zip holding one .xml, which does not parse. Both
+        # marks are present, and the point is that the app can now say which
+        # of the three buttons was pressed rather than "no Game Boy data".
+        dat = self.dat(DB_EXPORT, zipped=True, ext=".xml")
+        self.assertFalse(dat)
+        self.assertIs(dat.problem, nointro.Problem.DB_EXPORT)
+
+    def test_the_db_export_is_still_named_once_it_is_unpacked(self):
+        # Extracted by hand, or rezipped under a .dat name by somebody's
+        # tooling. The zip is gone and so is the extension, so this is the
+        # header check on its own, which is the one that has to hold.
+        for name, kwargs in (("extracted .xml", {"ext": ".xml"}),
+                             ("renamed .dat", {}),
+                             ("rezipped .dat", {"zipped": True})):
+            with self.subTest(name):
+                dat = self.dat(DB_EXPORT, **kwargs)
+                self.assertFalse(dat)
+                self.assertIs(dat.problem, nointro.Problem.DB_EXPORT)
+
+    def test_a_broken_file_is_not_blamed_on_the_wrong_button(self):
+        # None of these is a DB Export, and telling their owner to go and
+        # fetch a different flavour would send them to the wrong place. A
+        # truncated file and a doubled one both fail to parse; the second
+        # fails with the same expat error the DB Export does, and is still
+        # not one, because its document opens with <datafile>.
+        for name, xml in (("truncated", STANDARD[:200]),
+                          ("not xml at all", "this is not a DAT at all"),
+                          ("empty", ""),
+                          ("two datafiles", STANDARD + STANDARD)):
+            with self.subTest(name):
+                dat = self.dat(xml)
+                self.assertFalse(dat)
+                self.assertIs(dat.problem, nointro.Problem.DAMAGED)
+
+    def test_a_dat_zipped_as_xml_is_still_a_dat(self):
+        # The extension is a hint, not a verdict. A DAT that parses is loaded
+        # whatever its member was called, exactly as before.
+        dat = self.dat(STANDARD, zipped=True, ext=".xml")
+        self.assertEqual(len(dat), 3)
+        self.assertIs(dat.problem, nointro.Problem.NONE)
+
+    # ------------------------------------------------ why a load was empty --
+    def test_a_load_that_worked_has_nothing_to_explain(self):
+        self.assertIs(self.dat(STANDARD).problem, nointro.Problem.NONE)
+        self.assertIs(nointro.Dat().problem, nointro.Problem.NONE)
+        self.assertIs(nointro.Catalog().get("gbc").problem,
+                      nointro.Problem.NONE)
+
+    def test_the_reasons_a_load_is_empty_are_told_apart(self):
+        gone = os.path.join(self.tmp.name, "never-downloaded.zip")
+        self.assertIs(nointro.load(gone).problem, nointro.Problem.MISSING)
+        self.assertIs(self.dat("<mame><game/></mame>").problem,
+                      nointro.Problem.NOT_A_DAT)
+        self.assertIs(self.dat(DB_EXPORT).problem, nointro.Problem.DB_EXPORT)
+        self.assertIs(self.dat("nonsense").problem, nointro.Problem.DAMAGED)
+
+    def test_a_reason_does_not_change_what_an_empty_dat_is(self):
+        # The contract the rest of the app leans on: still falsy, still
+        # empty, still not an exception, and a lookup still says UNKNOWN.
+        dat = self.dat(DB_EXPORT, zipped=True, ext=".xml")
+        self.assertFalse(dat)
+        self.assertEqual(len(dat), 0)
+        self.assertEqual(dat.entries, {})
+        self.assertIs(dat.lookup(PARENT).outcome, nointro.Outcome.UNKNOWN)
+
+    def test_a_refusal_keeps_its_reason_on_the_way_through_the_catalog(self):
+        catalog = nointro.Catalog()
+        path = DatFile(self.tmp.name, "Nintendo - Game Boy",
+                       DB_EXPORT, True, ".xml").path
+        # add() answers the only question it ever answered.
+        self.assertIsNone(catalog.add(path))
+        self.assertEqual(catalog.loaded(), ())
+        # take() is the same load, for the caller that has to explain itself.
+        dat = catalog.take(path)
+        self.assertFalse(dat)
+        self.assertIs(dat.problem, nointro.Problem.DB_EXPORT)
+
+    def test_a_dat_for_another_console_is_refused_as_that(self):
+        # It parsed and it is somebody's real DAT; it is only not ours, and
+        # saying "damaged" about it would be a lie.
+        catalog = nointro.Catalog()
+        xml = STANDARD.replace("Nintendo - Game Boy", "Sega - Mega Drive")
+        dat = catalog.take(DatFile(self.tmp.name, "md", xml).path)
+        self.assertFalse(dat)
+        self.assertIs(dat.problem, nointro.Problem.WRONG_SYSTEM)
+        self.assertEqual(catalog.loaded(), ())
+        taken = catalog.take(DatFile(self.tmp.name, "md", xml).path, "gb")
+        self.assertTrue(taken)
+        self.assertIs(taken.problem, nointro.Problem.NONE)
+        self.assertEqual(catalog.loaded(), ("gb",))
+
     # ------------------------------------------------------------- hashing --
     def test_one_pass_over_a_dump_gives_what_a_lookup_wants(self):
         path = os.path.join(self.tmp.name, "DUMP.gb")
@@ -330,6 +448,10 @@ REAL = [n for n in (sorted(os.listdir(DOWNLOADS)) if os.path.isdir(DOWNLOADS)
                     else [])
         if n.startswith("Nintendo - Game Boy") and n.endswith(".zip")
         and "DB Export" not in n]
+DB_EXPORTS = [n for n in (sorted(os.listdir(DOWNLOADS))
+                          if os.path.isdir(DOWNLOADS) else [])
+              if n.startswith("Nintendo - ") and n.endswith(".zip")
+              and "DB Export" in n]
 
 
 @unittest.skipUnless(REAL, "no No-Intro downloads on this machine")
@@ -346,6 +468,19 @@ class RealDownloadTest(unittest.TestCase):
             # always there; a gap would silently shrink the index.
             self.assertTrue(all(len(k) == 40 for k in dat.entries))
             self.assertTrue(all(e.size and e.crc32 for e in dat.entries.values()))
+            self.assertIs(dat.problem, nointro.Problem.NONE)
+
+
+@unittest.skipUnless(DB_EXPORTS, "no No-Intro DB Export on this machine")
+class RealDbExportTest(unittest.TestCase):
+    def test_the_real_db_export_is_recognised_as_one(self):
+        # The fixture above is a shape written from the plan. This is the
+        # check that the shape is the one the site actually hands out.
+        for name in DB_EXPORTS:
+            with self.subTest(name):
+                dat = nointro.load(os.path.join(DOWNLOADS, name))
+                self.assertFalse(dat)
+                self.assertIs(dat.problem, nointro.Problem.DB_EXPORT)
 
 
 if __name__ == "__main__":
