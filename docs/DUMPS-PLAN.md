@@ -383,6 +383,23 @@ it has a name the matcher was built for. Where a clone has no cheat file of its
 own, the parent's name is the obvious second attempt — `cloneof` in a
 Parent-Clone DAT, `cloneofid` resolved against `id` in a Standard one.
 
+**That fallback is narrower than it sounds, and it is worth knowing why.** The
+first test written for it failed, and the code was right: `match.normalize()`
+strips parenthesised tags, so *Widget Quest (Japan)* and *Widget Quest (USA)*
+are the same string to the matcher, and the parent's cheat file is already
+found on the clone's own name. A **regional** clone — which is most of them —
+never reaches the fallback at all.
+
+What reaches it is a clone that was **retitled**, where the difference is in
+the words rather than the tags: Probotector against Contra, or any of the
+Japanese releases that were renamed for export. Those are the cases `cloneof`
+earns its place on, and they are a small minority of the 876 clone links in the
+Parent-Clone Game Boy DAT.
+
+Both paths are pinned by tests, the regional one deliberately: if `normalize()`
+ever stops stripping tags, the fallback would quietly start carrying every
+regional clone, and that test is what would notice.
+
 The user can always override, and an override is remembered, exactly as it is
 for a ROM today.
 

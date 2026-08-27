@@ -730,11 +730,20 @@ class CheatTest(Env):
         super().setUp()
         self.parent_rom = gb_rom(b"WIDGET", filler=b"\x41")
         self.clone_rom = gb_rom(b"WIDGET", filler=b"\x42")
+        self.regional_rom = gb_rom(b"WIDGET", filler=b"\x43")
+        # The clone is retitled, not merely re-regioned. match.normalize()
+        # strips parenthesised tags, so "Widget Quest (Japan)" and "Widget
+        # Quest (USA)" are the same string to the matcher and the parent's file
+        # is found on the clone's own name -- see the regional test below. Only
+        # a clone whose *title* differs can reach the fallback, which is what
+        # Probotector is to Contra and what this fixture stands in for.
         self.cat = self.catalog(gb=[
             {"name": "Widget Quest (USA)", "rom": "Widget Quest (USA).gb",
              "data": self.parent_rom},
+            {"name": "Gadget Saga (Japan)", "rom": "Gadget Saga (Japan).gb",
+             "data": self.clone_rom, "parent": "Widget Quest (USA)"},
             {"name": "Widget Quest (Japan)", "rom": "Widget Quest (Japan).gb",
-             "data": self.clone_rom, "parent": "Widget Quest (USA)"}])
+             "data": self.regional_rom, "parent": "Widget Quest (USA)"}])
 
     def identify(self, name: str, data: bytes):
         dump = self.dumps.read(self.put(name, data))
@@ -748,17 +757,33 @@ class CheatTest(Env):
         self.assertEqual(found.name, "Widget Quest (USA)")
         self.assertFalse(found.via_parent)
 
-    def test_a_clone_with_no_file_of_its_own_falls_back_to_its_parent(self):
+    def test_a_retitled_clone_falls_back_to_its_parent(self):
+        """The only clone that needs the fallback is one with another title."""
         self.cheat_db(["Widget Quest (USA)"])
-        found = self.dumps.cheat(self.identify("WIDGET2.gb", self.clone_rom))
+        found = self.dumps.cheat(self.identify("GADGET.gb", self.clone_rom))
         self.assertTrue(found)
         self.assertTrue(found.via_parent)
         self.assertEqual(found.name, "Widget Quest (USA)")
 
+    def test_a_regional_clone_never_needs_the_fallback(self):
+        """`(Japan)` and `(USA)` are the same string to match.normalize().
+
+        Worth pinning, because it is the case the fallback looks like it is
+        for and the one case it is never used on: the matcher strips the
+        parentheses, so the parent's file is found on the clone's own name and
+        `via_parent` stays false. If normalize() ever stops stripping tags this
+        test fails and the fallback silently starts carrying regional clones.
+        """
+        self.cheat_db(["Widget Quest (USA)"])
+        found = self.dumps.cheat(self.identify("WIDGET2.gb", self.regional_rom))
+        self.assertTrue(found)
+        self.assertEqual(found.name, "Widget Quest (USA)")
+        self.assertFalse(found.via_parent)
+
     def test_a_clone_with_its_own_file_does_not_use_the_parent(self):
-        self.cheat_db(["Widget Quest (USA)", "Widget Quest (Japan)"])
-        found = self.dumps.cheat(self.identify("WIDGET2.gb", self.clone_rom))
-        self.assertEqual(found.name, "Widget Quest (Japan)")
+        self.cheat_db(["Widget Quest (USA)", "Gadget Saga (Japan)"])
+        found = self.dumps.cheat(self.identify("GADGET.gb", self.clone_rom))
+        self.assertEqual(found.name, "Gadget Saga (Japan)")
         self.assertFalse(found.via_parent)
 
     def test_nothing_close_enough_is_said_rather_than_guessed(self):
