@@ -138,15 +138,69 @@ class Installed(Env):
 
 
 class Wanted(Env):
-    """Which files the core says you have to supply."""
+    """Which files the core says you have to supply, and which we know it does.
 
-    def test_the_cards_data_json_wins_over_the_table(self) -> None:
+    The answer is the union of the two rather than the core's with ours as a
+    fallback, because a core can be wrong about itself and one of them is: the
+    Game Boy Advance core marks its boot ROM optional and then will not start a
+    game without it. Under a fallback that core got the right answer only
+    because it declared nothing this app kept, which is luck, not a lookup.
+    """
+
+    def test_a_new_file_the_core_declares_is_reported(self) -> None:
+        # The reason the lookup exists at all: a core that starts wanting a
+        # file this app has never heard of still gets it asked for.
+        install_core(self.root, GBC, "1.0", {
+            "name": "Some Other BIOS", "filename": "other.bin",
+            "required": True, "size_exact": 4096})
+        got = {r.filename: r for r in core.wanted(self.root, GBC)}
+        self.assertIn("other.bin", got)
+        self.assertEqual(got["other.bin"].size, 4096)
+
+    def test_a_declaration_does_not_drop_what_the_table_knows(self) -> None:
+        # The half a fallback got wrong. The core naming one file is not the
+        # core saying it no longer needs the other.
         install_core(self.root, GBC, "1.0", {
             "name": "Some Other BIOS", "filename": "other.bin",
             "required": True, "size_exact": 4096})
         got = core.wanted(self.root, GBC)
-        self.assertEqual([r.filename for r in got], ["other.bin"])
-        self.assertEqual(got[0].size, 4096)
+        self.assertEqual([r.filename for r in got],
+                         ["other.bin", "gbc_bios.bin"])
+
+    def test_a_file_both_of_them_name_appears_once(self) -> None:
+        install_core(self.root, GBC, "1.0", {
+            "name": "GBC BIOS", "filename": "gbc_bios.bin",
+            "required": True, "size_exact": 2304})
+        self.assertEqual([r.filename for r in core.wanted(self.root, GBC)],
+                         ["gbc_bios.bin"])
+
+    def test_the_installed_core_settles_a_size_it_disagrees_about(self) -> None:
+        # size_exact is what the framework checks when it fills the slot, so a
+        # file that does not match the core on the card will not load however
+        # sure the table is.
+        install_core(self.root, GBC, "1.0", {
+            "name": "GBC BIOS", "filename": "gbc_bios.bin",
+            "required": True, "size_exact": 2048})
+        got = core.wanted(self.root, GBC)
+        self.assertEqual([(r.filename, r.size) for r in got],
+                         [("gbc_bios.bin", 2048)])
+
+    def test_a_core_that_names_no_size_has_not_disagreed(self) -> None:
+        # Silence is not "any size" when the table knows the number.
+        install_core(self.root, GBC, "1.0", {
+            "name": "GBC BIOS", "filename": "gbc_bios.bin", "required": True})
+        self.assertEqual(core.wanted(self.root, GBC)[0].size, 2304)
+
+    def test_game_boy_advance_marks_its_boot_rom_optional(self) -> None:
+        # The real data.json: slot 4, 16384 bytes, required false. The filter
+        # keeps nothing, and the file still has to be asked for, because the
+        # core's own README says it will not start a game without it.
+        install_core(self.root, GBA, "1.0", {
+            "name": "GBA BIOS", "id": 4, "filename": "gba_bios.bin",
+            "required": False, "size_exact": 16384})
+        got = core.wanted(self.root, GBA)
+        self.assertEqual([(r.filename, r.size) for r in got],
+                         [("gba_bios.bin", 16384)])
 
     def test_browsable_slots_are_not_files_you_supply(self) -> None:
         # Cartridge and Save are required and have no fixed filename. Reporting
@@ -155,12 +209,31 @@ class Wanted(Env):
         self.assertEqual(core.wanted(self.root, GBC), GBC.bios)
 
     def test_optional_fixed_files_are_not_demanded(self) -> None:
+        # A palette is a file you may supply, not one you must, and the table
+        # does not name it. Nothing puts it in the union.
         install_core(self.root, GBC, "1.0", {
             "name": "Palette", "filename": "pal.bin", "required": False})
         self.assertEqual(core.wanted(self.root, GBC), GBC.bios)
 
     def test_an_uninstalled_core_falls_back_to_the_table(self) -> None:
         self.assertEqual(core.wanted(self.root, GB), GB.bios)
+
+    def test_an_unreadable_data_json_still_answers_from_the_table(self) -> None:
+        install_core(self.root, GB, "1.0")
+        write(os.path.join(self.root, "Cores", GB.id, "data.json"), "{oops")
+        self.assertEqual(core.wanted(self.root, GB), GB.bios)
+
+    def test_the_gba_boot_rom_survives_the_core_being_installed(self) -> None:
+        # End to end, which is what the fallback got right by accident: with
+        # the core on the card and the file absent, it is a reported problem.
+        install_core(self.root, GBA, "1.0", {
+            "name": "GBA BIOS", "id": 4, "filename": "gba_bios.bin",
+            "required": False, "size_exact": 16384})
+        bad = core.survey(self.root).problems()
+        self.assertEqual([r.rom.filename for r in bad], ["gba_bios.bin"])
+        self.assertEqual(bad[0].where,
+                         os.path.join("Assets", "gba", "common",
+                                      "gba_bios.bin"))
 
 
 class BootRoms(Env):
