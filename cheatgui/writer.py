@@ -66,7 +66,8 @@ NO_LIMIT = cheatfile.NO_LIMIT
 
 
 def load_library(cht_path: str, platform: str) -> list:
-    return cheatfile.parse(open(cht_path, "rb").read(), platform)
+    with open(cht_path, "rb") as f:
+        return cheatfile.parse(f.read(), platform)
 
 
 def load_installed(game_cht: str, platform: str) -> set[tuple]:
