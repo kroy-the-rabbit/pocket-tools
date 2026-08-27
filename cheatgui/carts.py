@@ -20,6 +20,11 @@ import prefs
 
 LIST = os.path.join(os.path.dirname(prefs.CONFIG), "cartridges.json")
 
+# The file format. Written from now on so that a later change to what a row
+# means has something to test against: a file with no version is version 0, and
+# version 0 is every cartridges.json written before this line existed.
+VERSION = 1
+
 # Where the files go on the card. Its own folder so the core's file browser
 # opens on your cartridges rather than on a few hundred ROMs.
 CARD_DIR = "Cartridges"
@@ -61,6 +66,15 @@ class Cartridge:
 
 
 def _load() -> list[dict]:
+    """The rows, whatever wrote them.
+
+    A file with no version field is version 0, and that is every
+    cartridges.json written before the field existed. Its rows are read as they
+    stand and carry the version forward on the next save: unlike the dump index,
+    this list is what the user typed and cannot be rebuilt from anything, so
+    discarding a file we do not recognise would be losing it. There has only
+    ever been one row shape, so 0 and 1 differ in nothing but the field itself.
+    """
     try:
         data = json.load(open(LIST))
         return data.get("cartridges", [])
@@ -72,7 +86,7 @@ def _save(rows: list[dict]) -> None:
     os.makedirs(os.path.dirname(LIST), exist_ok=True)
     tmp = LIST + ".tmp"
     with open(tmp, "w") as f:
-        json.dump({"cartridges": rows}, f, indent=2)
+        json.dump({"version": VERSION, "cartridges": rows}, f, indent=2)
     os.replace(tmp, LIST)
 
 
