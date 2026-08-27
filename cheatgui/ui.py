@@ -13,6 +13,7 @@ what a ROM patch needs. See docs/CHEATS.md.
 from __future__ import annotations
 
 import os
+import textwrap
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -600,14 +601,15 @@ class App(ttk.Frame):
             self.show_roms()
 
     def show_roms(self) -> None:
-        """What each core needs, whether it is there, and where it goes."""
+        """What each core needs, whether it is there, and where it goes.
+
+        The same dialog whether it was asked for from the core bar or opened
+        by an install that finished onto a card with a boot ROM missing. The
+        second is the case it exists for and the one nobody goes looking for.
+        """
         if self.survey is None:
             return
-        text = core_mod.rom_advice(self.survey)
-        if self.survey.problems():
-            messagebox.showwarning("Boot ROMs", text)
-        else:
-            messagebox.showinfo("Boot ROMs", text)
+        RomsDialog(self, self.survey)
 
     # ----------------------------------------------------------------- panes --
     def on_system(self, _evt=None) -> None:
@@ -1465,6 +1467,184 @@ class CoresDialog(tk.Toplevel):
             return
         self.result = picked
         self.destroy()
+
+
+class RomsDialog(tk.Toplevel):
+    """Every boot ROM the installed cores need, and where each one goes.
+
+    This was a message box, which was the right amount of work for one line of
+    text and the wrong container for a table. A message box renders in a
+    proportional font, so the spaces that made the columns made ragged text
+    instead; it wrapped to its own width, so a long entry broke wherever Tk
+    chose and paths broke mid-path; nothing separated one entry from the next,
+    so four boot ROMs read as one paragraph; and the path, the only text in it
+    anybody has to act on, could not be selected. The Cores dialog had the same
+    complaint made of it and answered it with a Treeview, so this answers it
+    the same way: a row per boot ROM, columns that are columns, and the prose
+    wrapped here at a width we chose rather than at one Tk picked.
+
+    It reports and never repairs. A boot ROM is copyrighted console code; this
+    app names it, sizes it, says where it goes, and will do nothing else.
+    """
+
+    # Wide enough for the longest line of prose without a second thought, and
+    # narrow enough that the eye does not lose the start of the next line.
+    PROSE = 96
+
+    def __init__(self, app, survey: core_mod.Survey) -> None:
+        super().__init__(app)
+        self.survey = survey
+        self.title("Boot ROMs")
+        self.transient(app)
+        self.resizable(False, False)
+        self.columnconfigure(0, weight=1)
+
+        body = ttk.Frame(self, padding=12)
+        body.grid(row=0, column=0, sticky="nsew")
+        body.columnconfigure(0, weight=1)
+
+        ttk.Label(body, text="Boot ROMs for the cores on this card").grid(
+            row=0, column=0, sticky="w")
+        ttk.Label(body, foreground="#666", text=survey.root).grid(
+            row=1, column=0, sticky="w", pady=(1, 8))
+
+        cols = ("state", "size", "where")
+        self.tree = ttk.Treeview(body, columns=cols, show="tree headings",
+                                 selectmode="browse",
+                                 height=max(len(survey.roms), 1))
+        self.tree.heading("#0", text="Boot ROM")
+        self.tree.heading("state", text="On the card")
+        self.tree.heading("size", text="Size wanted")
+        self.tree.heading("where", text="Directory")
+        self.tree.column("#0", width=190, stretch=False)
+        self.tree.column("state", width=170, stretch=False, anchor="center")
+        self.tree.column("size", width=110, stretch=False, anchor="center")
+        self.tree.column("where", width=260, stretch=False)
+        self.tree.grid(row=2, column=0, sticky="ew")
+        # The same three meanings the cheat list and the Cores dialog give
+        # these colours: a fault, something worth drawing the eye to, and a row
+        # there is nothing to do about. A missing file and a file of the wrong
+        # size fail differently - one is not there, the other is there and
+        # wrong, and the second is the one people stare at without seeing - so
+        # they do not share a colour.
+        self.tree.tag_configure("missing", foreground="#a00")
+        self.tree.tag_configure("wrong", foreground="#0a6")
+        self.tree.tag_configure("ok", foreground="#999")
+
+        # iid -> the whole path to copy. For a file that is there, where it was
+        # found, which is not always where we would have put it: the core's own
+        # directory counts too. For one that is not, where it should go.
+        self.paths: dict[str, str] = {}
+        for n, r in enumerate(survey.roms):
+            iid = f"{r.core.id}:{r.rom.filename}:{n}"
+            size = f"{r.rom.size} bytes" if r.rom.size else "any size"
+            if r.path is None:
+                state, tag = "missing", "missing"
+                full = os.path.join(survey.root, r.where)
+            elif r.wrong_size:
+                # Both numbers, because "wrong size" on its own leaves the file
+                # being compared against nothing.
+                state, tag = f"wrong size: {r.size} bytes", "wrong"
+                full = r.path
+            else:
+                state, tag = "present", "ok"
+                full = r.path
+            rel = os.path.relpath(full, survey.root)
+            self.paths[iid] = full
+            self.tree.insert("", "end", iid=iid, text=f"  {r.rom.filename}",
+                             values=(state, size, os.path.dirname(rel)),
+                             tags=(tag,))
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: self.show_path())
+
+        # Wrapped here rather than by Tk. wraplength hands the break point to
+        # the widget's width, which is how the message box ended up breaking a
+        # path in half; a fixed column is a decision that survives resizing,
+        # theming and a different font.
+        self.prose = ttk.Label(body, foreground="#666", justify="left",
+                               text=textwrap.fill(self.advice(), self.PROSE))
+        self.prose.grid(row=3, column=0, sticky="w", pady=(10, 0))
+
+        self.note = ttk.Label(body, foreground="#666", text="")
+        self.note.grid(row=4, column=0, sticky="w", pady=(6, 0))
+
+        row = ttk.Frame(body)
+        row.grid(row=5, column=0, sticky="e", pady=(14, 0))
+        ttk.Button(row, text="Close", command=self.destroy).pack(
+            side="right", padx=(6, 0))
+        self.copy_btn = ttk.Button(row, text="Copy path",
+                                   command=self.copy_path)
+        self.copy_btn.pack(side="right")
+        # An "Open" button goes to the left of Copy path, showing the selected
+        # row's directory in the file manager through reveal.py. It is not here
+        # yet because that module is not: it belongs beside Copy path rather
+        # than replacing it, since a sandboxed or headless build has no file
+        # manager to call and the path still has to be gettable there. When it
+        # lands it calls reveal.open_dir() on os.path.dirname of the selected
+        # path, and is offered only for a directory that already exists -
+        # Assets/<platform>/common/ may not, and looking at a directory must
+        # never be what creates it.
+
+        # A selection to start with, so Copy path means something without a
+        # click, and the first thing wrong rather than the first thing listed.
+        bad = [i for i in self.tree.get_children()
+               if self.tree.tag_has("missing", i)
+               or self.tree.tag_has("wrong", i)]
+        first = (bad or list(self.tree.get_children()))
+        if first:
+            self.tree.selection_set(first[0])
+            self.tree.focus(first[0])
+        self.show_path()
+
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.copy_btn.focus_set()
+        self.grab_set()
+        self.wait_window(self)
+
+    # ------------------------------------------------------------- behaviour --
+    def advice(self) -> str:
+        """The prose above the table: what these are and why we do not ship one.
+
+        Two sentences that never change, and one that does, because "four are
+        present" and "one of them is not there" want different next steps and
+        the difference is the reason the dialog opened.
+        """
+        text = ("A boot ROM is the code the console runs before the game does. "
+                "It is copyrighted, so it is not in the core and it is not in "
+                "this app: dump it from your own hardware or supply your own "
+                "copy. ")
+        if not self.survey.roms:
+            return text + ("None of the cores on this card need one, so there "
+                           "is nothing to put anywhere.")
+        if not self.survey.problems():
+            return text + "Every one of these is where the core looks for it."
+        return text + ("Put each missing file in the directory listed for it, "
+                       "under the card. The core will not start a game "
+                       "without it.")
+
+    def selected(self) -> str | None:
+        sel = self.tree.selection()
+        return self.paths[sel[0]] if sel else None
+
+    def show_path(self) -> None:
+        """The whole path of the selected row, unbroken, under the table."""
+        path = self.selected()
+        self.copy_btn.state(["!disabled"] if path else ["disabled"])
+        self.note.config(foreground="#666", text=path or "")
+
+    def copy_path(self) -> None:
+        """Put the selected path on the clipboard.
+
+        The message box could not do this, and the path was the only thing in
+        it worth having. It also covers the cases where showing a directory in
+        a file manager is not available at all - a Flatpak or Snap build, a
+        machine being driven over ssh - so it stays even once Open exists.
+        """
+        path = self.selected()
+        if path is None:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(path)
+        self.note.config(foreground="#060", text=f"copied  {path}")
 
 
 class Chooser(tk.Toplevel):
