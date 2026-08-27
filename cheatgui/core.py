@@ -402,24 +402,57 @@ def outdated(versions: dict[str, str | None],
 
 def describe(sv: Survey | None,
              rels: dict[str, dict] | None) -> tuple[str, bool]:
-    """One line for the status bar, and whether it is bad news."""
+    """One line for the status bar, and whether it is bad news.
+
+    This named every installed core and its version before it said anything
+    about staleness, which meant one non-wrapping label in a grid cell was
+    answering two questions that both grow with the number of cores: what
+    have I got, and is any of it stale. Measured against a real card with
+    four cores on it that came to 94 characters offline, 106 with everything
+    current and 149 with three of the four behind, and the cartridge dumper
+    is a fifth core carrying `kroy.CartTools 0.0.1.41e8d8a`, which is another
+    thirty and puts the worst case past 190 in a window whose minimum width
+    is 1100 pixels. The line does not wrap. It ran out of window.
+
+    The first question is a table and CoresDialog already draws it, a row per
+    core with what the card has beside what is available, which is strictly
+    better than the same data comma-separated. Only the second question
+    belongs on a status bar, so this counts rather than enumerates and its
+    length stops depending on how many cores this app knows about. The
+    Cores... button sits next to the label and answers "which ones".
+    """
     if sv is None:
         return "Pocket core: no card", False
-    have = [f"{c.id} {sv.versions[c.id]}" for c in CORES if sv.versions[c.id]]
-    if not have:
+    n = sum(1 for v in sv.versions.values() if v)
+    if not n:
+        # The most important sentence in the window on a stock card, and the
+        # reason this state is worded rather than counted: every button in
+        # this app writes a file that nothing on the handheld will read, and
+        # a bare "0 installed" does not say that to anyone.
         return ("Pocket core: not installed. Nothing written here has any "
                 "effect until it is."), True
-    line = "Pocket core: " + ", ".join(have)
+    line = f"Pocket core: {n} installed"
     if not rels:
-        # Nothing to compare against, whether because nobody has asked yet or
-        # because the ask found no releases at all. Neither is "up to date".
+        # No release data, because nobody has asked yet or because the ask
+        # could not reach GitHub. The count with no verdict after it is the
+        # only honest ending: "all up to date" is a claim this app has not
+        # checked and would be wrong exactly when it matters, and spelling
+        # the gap out - "update status unknown" - reports the network as a
+        # fault with the card and earns the red that belongs to a real one.
+        # A machine that has not asked does not know, and saying only what it
+        # does know reads as neither a problem nor a clean bill of health.
+        # When the ask was tried and failed the caller has better information
+        # than this function does, and ui.py appends its own "(could not
+        # reach the release page)" to say so; there is nothing to add here.
         return line, False
     behind = outdated(sv.versions, rels)
     if not behind:
-        return line + "  up to date", False
-    versions = sorted({release_for(c, rels)["version"] for c in behind})
-    names = ", ".join(c.id for c in behind)
-    return f"{line}  update available: {', '.join(versions)} ({names})", True
+        return line + ", all up to date", False
+    # Exactly the cores CoresDialog would offer to write, counted instead of
+    # named. "1 updates available" is the kind of wrong that makes a careful
+    # line look generated, so the plural is agreed with the number.
+    s = "" if len(behind) == 1 else "s"
+    return f"{line}, {len(behind)} update{s} available", True
 
 
 def describe_roms(sv: Survey | None) -> tuple[str, bool]:
