@@ -107,7 +107,7 @@ correctly by a copy of the app that predates it.
 ## Get the picker
 
 Download a build from the
-[releases page](https://github.com/kroy-the-rabbit/pocket-cheats-sync/releases),
+[releases page](https://github.com/kroy-the-rabbit/pocket-tools/releases),
 or run it from a checkout:
 
 ```sh
@@ -402,6 +402,13 @@ code, but it exists because of them.
 | [SameBoy](https://github.com/LIJI32/SameBoy) | `Core/cheats.c`, the reference the Game Genie decoder follows. Expat (MIT) license, copyright Lior Halphon |
 | [libretro/libretro-database](https://github.com/libretro/libretro-database) | the cheat files themselves |
 | [Analogue openFPGA](https://www.analogue.co/developer) | the Pocket framework the cores are built on |
+
+## Trademarks
+
+Not affiliated with, authorised by or endorsed by Analogue, Inc. "Analogue",
+"Pocket" and "openFPGA" are theirs. They are used here only to say which
+hardware this software is for, which is the one thing a name like that can
+honestly do.
 
 ## License
 
