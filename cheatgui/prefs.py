@@ -51,6 +51,39 @@ def set_library(path: str | None) -> None:
     _save(data)
 
 
+def get_rejected(sha1: str) -> str | None:
+    """The day a cartridge dump was turned down, or None if it never was.
+
+    Keyed on SHA-1, like everything else about a dump, because a filename is
+    exactly what collides: two cartridges that both title themselves ZELDA
+    produce the same one, and rejecting the first would silently reject the
+    second.
+
+    This is here rather than in the library's index because it is a *decision*.
+    The index is a cache that a rebuild reproduces by re-hashing files and
+    asking the DAT again, and no amount of that recovers the fact that somebody
+    said no. Anything that cannot survive deleting index.json belongs in this
+    file with the app's other remembered choices.
+    """
+    return _load().get("rejected", {}).get(sha1)
+
+
+def set_rejected(sha1: str, when: str | None) -> None:
+    """Remember, or with None forget, that a dump was turned down.
+
+    Forgetting is what re-offering a dump means, and it is a separate call
+    because it has to be asked for: the point of the rejection is that the next
+    run does not ask again.
+    """
+    data = _load()
+    rejected = data.setdefault("rejected", {})
+    if when is None:
+        rejected.pop(sha1, None)
+    else:
+        rejected[sha1] = when
+    _save(data)
+
+
 def get_source(rom_path: str) -> str | None:
     """The cheat file the user pinned for this ROM, if any."""
     return _load().get("sources", {}).get(os.path.basename(rom_path))
