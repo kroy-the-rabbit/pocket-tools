@@ -98,12 +98,14 @@ Standard points at it with a numeric `cloneofid` that resolves against each
 game's `id`. Both express the same graph; the second needs one dictionary built
 while parsing.
 
-Measured on the real Game Boy exports of 2026-08-27, both at the same version:
+Measured on the real Game Boy exports of 2026-08-27, both at the same version.
+\* The 1963 regions are `<release>` elements rather than games: they spread over
+1657 of the 2295 entries, led by Japan 810, USA 571 and Europe 502.
 
 | | entries | crc/md5/sha1 | sha256 | clone link | regions |
 |---|---|---|---|---|---|
 | Standard | 2001 | 100% | 96% | `cloneofid`, numeric | none |
-| Parent-Clone | 2295 | 100% | 0% | `cloneof`, by name | 1963 |
+| Parent-Clone | 2295 | 100% | 0% | `cloneof`, by name | 1963* |
 | DB Export | 2333 | 100% | 100% | `clone` + `regparent` | full blocks |
 
 The 294-entry gap is not a format difference. Compared by hash, Parent-Clone
@@ -114,8 +116,33 @@ net, so **prefer it if you dump homebrew**, and otherwise it does not matter.
 
 DB Export carries much more — development status, categories, languages,
 licensed and aftermarket flags — in a different schema at four times the size,
-and none of it is needed to identify or name a dump. A later enrichment, not a
-requirement.
+and none of it is needed to identify or name a dump.
+
+**But it cannot be read at all, and the app has to say so.** This was written
+as "a later enrichment, not a requirement", which was too generous. Checked
+against the real 2026-08-27 download, a DB Export fails for two independent
+reasons:
+
+- **It is not a `.dat`.** The zip holds one `.xml`, so anything looking for a
+  DAT member finds nothing and stops before parsing.
+- **It is not well-formed XML.** The file has *two* top-level elements,
+  `<header>` followed by `<datafile>`, and any conforming parser refuses it:
+  `junk after document element: line 9, column 0`. The 2333 figure in the table
+  above comes from counting `<game ` in the text, not from parsing, and the
+  hash coverage claimed for that row should be read the same way.
+
+So the flavour that "does not matter" quietly does. Today the loader returns
+nothing and the user is told "no Game Boy data loaded", which is true and
+useless: they downloaded a file from the right page, for the right system, on
+the right day, and the app implies they did not.
+
+**Recognising it is two cheap checks** — a lone `.xml` member where a `.dat`
+was expected, or a document whose first element is `<header>` rather than
+`<datafile>` — and the message has to name the mistake and the fix: this is the
+DB Export, download the DAT or the Parent-Clone DAT instead. Refusing a file is
+fine. Refusing it without saying which of the three buttons to press instead is
+the thing to avoid, and it is the same instinct as the sentence above about not
+being obnoxious over a flavour label.
 
 **Match on SHA-1.** It is the only hash present in every entry of every flavour.
 sha256 is 96% of the Standard Game Boy DAT, 41% of Game Boy Color, 30% of Game
