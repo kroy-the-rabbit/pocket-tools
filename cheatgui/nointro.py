@@ -26,10 +26,14 @@ Measured on the Game Boy exports of 2026-08-27, both at the same version: 2001
 entries against 2295, agreeing on every field of the 1997 they share. The
 extra 298 are aftermarket and homebrew, so Parent-Clone is the wider net.
 
-The third flavour, **DB Export, is not a DAT and does not parse**: its file has
-both a `<header>` and a `<datafile>` element at the top level, which is not
+The third flavour, **DB Export, is not a DAT and does not parse**: its zip
+holds an `.xml` rather than a `.dat`, and the file inside carries both a
+`<header>` and a `<datafile>` element at the top level, which is not
 well-formed XML, and it is four times the size for fields identification does
-not use. It loads as empty, like any other file that is not a DAT.
+not use. It still loads as empty, but it no longer loads as *nothing*:
+`Dat.problem` names it. Someone who went to the right page, picked the right
+system and pressed the third of three buttons has made one small mistake, and
+"no Game Boy data loaded" tells them none of that.
 
 **Everything is keyed on SHA-1.** It is the only hash present in every entry of
 every flavour: sha256 covers 96% of the Standard Game Boy DAT, 41% of Game Boy
@@ -43,7 +47,8 @@ Hostile input is the user's own download, but it arrives over the internet, so
 it is treated as untrusted: the archive is refused above a size ceiling before
 anything is decompressed, and `xml.etree.ElementTree` resolves no external
 entities (it raises on them) while expat caps how far an internal one may
-expand. A file that fails any of that is an empty result, not an exception.
+expand. A file that fails any of that is an empty result, not an exception,
+carrying a `Problem` that says which failure it was.
 
 Standard library only, and nothing here touches Tk or the network.
 """
@@ -55,7 +60,8 @@ import os
 import xml.etree.ElementTree as ET
 import zipfile
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from xml.parsers import expat
 
 # Pocket platform id -> the system name No-Intro publishes under. Written out
 # rather than derived from card.KNOWN, which maps the same ids to libretro's
@@ -80,6 +86,12 @@ MAX_DAT = 64 * 1024 * 1024
 
 CHUNK = 1024 * 1024
 
+# expat's number for a second top-level element, which is the whole of what is
+# wrong with a DB Export as far as a parser is concerned. Looked up by name so
+# that the 9 it happens to be is not written down here.
+JUNK_AFTER_DOCUMENT = expat.errors.codes[
+    expat.errors.XML_ERROR_JUNK_AFTER_DOC_ELEMENT]
+
 
 class Outcome(enum.Enum):
     """What a lookup found. Only the first of these is good news.
@@ -97,6 +109,39 @@ class Outcome(enum.Enum):
     UNKNOWN = "unknown"
     MISMATCH = "mismatch"
     NO_DATA = "no data"
+
+
+class Problem(enum.Enum):
+    """Why a load came back holding nothing, for the callers that must say.
+
+    A `Dat` is falsy whatever the reason and no caller is obliged to read
+    this, which is what keeps the contract intact: an unreadable file is still
+    not an exception, and `if not dat` still tells a lookup everything it
+    needs.
+
+    It is an enum rather than a sentence because this module cannot know
+    whether the sentence lands in a dialog, in a one-line status bar or in a
+    log, and prose written here would be wrapped wrong in at least one of
+    them. The distinction belongs here; the wording belongs to the UI, which
+    is the only side that knows its own width.
+
+    DB_EXPORT is the member this enum exists for. Every other reason is the
+    user's file being wrong; that one is the user being right about the site,
+    the system and the day, and pressing the third of three buttons. The UI
+    can then name the mistake and the fix - this is the DB Export, take the
+    DAT or the Parent-Clone DAT instead - which is a sentence it could not
+    write from an empty result.
+
+    DAMAGED is deliberately kept apart from it. A file that fails to parse for
+    some other reason is a broken or truncated download, and sending that user
+    back to press a different button would be worse than saying nothing.
+    """
+    NONE = "none"                  # loaded, or empty with nothing to say
+    MISSING = "missing"            # not there, unreadable, or refused by size
+    DB_EXPORT = "db export"        # the third button: not a DAT, and not XML
+    DAMAGED = "damaged"            # XML that does not parse, for other reasons
+    NOT_A_DAT = "not a dat"        # parses, but the root is not <datafile>
+    WRONG_SYSTEM = "wrong system"  # a real DAT, for a system this app has not
 
 
 @dataclass(frozen=True)
@@ -128,13 +173,16 @@ class Dat:
 
     An empty one is a normal object rather than a failure: a missing download,
     a corrupt file and a system nobody has fetched yet all arrive here, and
-    `if not dat` is how the caller tells.
+    `if not dat` is how the caller tells. `problem` is how it tells them
+    apart, and NONE on an empty one means a datafile that parsed and simply
+    held nothing this module could index.
     """
     system: str = ""
     name: str = ""                    # as the file's own header gives it
     version: str = ""                 # No-Intro's dated version string
     flavour: str = ""
     entries: dict[str, Entry] = field(default_factory=dict)
+    problem: Problem = Problem.NONE
 
     def __bool__(self) -> bool:
         return bool(self.entries)
@@ -181,11 +229,33 @@ class Catalog:
         this app does not handle is refused rather than filed under a system
         it might not be, unless the caller says which one it is.
         """
+        dat = self.take(path, system)
+        return dat.system if dat else None
+
+    def take(self, path: str, system: str = "") -> Dat:
+        """`add()`, with the reason for a refusal still attached.
+
+        Two methods rather than one because the two callers want different
+        things. Anything walking a directory of downloads wants the system and
+        nothing else, and `add()` stays exactly what it was for it. A caller
+        that has to explain a refusal to a person wants the Dat instead,
+        because the moment `Problem` is worth reading is the moment a file is
+        refused.
+
+        A refused file always comes back falsy, whatever was wrong with it, so
+        that the explaining caller has one shape to handle and not two.
+        """
         dat = load(path, system)
-        if not dat or not dat.system:
-            return None
+        if not dat:
+            return dat
+        if not dat.system:
+            # This one parsed and is somebody's real DAT; it is only not ours.
+            # Emptied on the way out so that a refusal looks the same here as
+            # it does for a file that could not be read at all. The caller can
+            # hand it back with a system if it knows better than the header.
+            return replace(dat, entries={}, problem=Problem.WRONG_SYSTEM)
         self.dats[dat.system] = dat
-        return dat.system
+        return dat
 
     def get(self, system: str) -> Dat:
         return self.dats.get(system) or Dat(system=system)
@@ -243,17 +313,18 @@ def load(path: str, system: str = "") -> Dat:
     Anything that is not a DAT this module understands - missing, unreadable,
     not XML, the wrong flavour, the wrong system - comes back as an empty Dat.
     A user who has not downloaded anything yet is in a normal state, and so is
-    one who handed over the wrong file.
+    one who handed over the wrong file. `Dat.problem` says which of those it
+    was; nothing here raises, and nothing here writes the sentence about it.
     """
-    data = _bytes(path)
-    if data is None:
-        return Dat(system=system)
+    source = _read(path)
+    if source.data is None:
+        return Dat(system=system, problem=Problem.MISSING)
     try:
-        root = ET.fromstring(data)
-    except ET.ParseError:
-        return Dat(system=system)
+        root = ET.fromstring(source.data)
+    except ET.ParseError as error:
+        return Dat(system=system, problem=_unparsable(source, error))
     if root.tag != "datafile":
-        return Dat(system=system)
+        return Dat(system=system, problem=Problem.NOT_A_DAT)
     return _index(root, system)
 
 
@@ -338,20 +409,34 @@ def _reparent(entry: Entry, parent: str) -> Entry:
                  parent)
 
 
-def _bytes(path: str) -> bytes | None:
+@dataclass(frozen=True)
+class _Source:
+    """The bytes to parse, and the one thing their container knew about them.
+
+    `xml_only` is a zip that offered an `.xml` and no `.dat` at all. It says
+    nothing on its own - the member is read either way, because refusing a DAT
+    over its extension would be the same obnoxious pedantry as refusing one
+    over its flavour - but it is half of what identifies a DB Export, and it
+    is free to notice while the member is being picked.
+    """
+    data: bytes | None
+    xml_only: bool = False
+
+
+def _read(path: str) -> _Source:
     """The XML inside a downloaded zip, or a bare file's contents."""
     try:
         if zipfile.is_zipfile(path):
             return _unzip(path)
         if os.path.getsize(path) > MAX_DAT:
-            return None
+            return _Source(None)
         with open(path, "rb") as f:
-            return f.read()
+            return _Source(f.read())
     except (OSError, zipfile.BadZipFile):
-        return None
+        return _Source(None)
 
 
-def _unzip(path: str) -> bytes | None:
+def _unzip(path: str) -> _Source:
     with zipfile.ZipFile(path) as zf:
         members = [
             i for i in zf.infolist()
@@ -365,13 +450,66 @@ def _unzip(path: str) -> bytes | None:
                  if i.filename.lower().endswith((".dat", ".xml"))]
         wanted = named or members
         if not wanted:
-            return None
+            return _Source(None)
         # Biggest first, so a zip holding the DAT next to a readme still finds
         # the DAT. The declared size decides whether to decompress at all.
         pick = max(wanted, key=lambda i: i.file_size)
         if pick.file_size > MAX_DAT:
-            return None
-        return zf.read(pick)
+            return _Source(None)
+        xml_only = bool(named) and not any(
+            i.filename.lower().endswith(".dat") for i in named)
+        return _Source(zf.read(pick), xml_only)
+
+
+def _unparsable(source: _Source, error: ET.ParseError) -> Problem:
+    """Tell the wrong download apart from the broken one.
+
+    The DB Export is known by two marks, either of which is enough and both of
+    which are cheap: its zip holds a lone `.xml` where a `.dat` was expected,
+    and its document opens with `<header>` where a DAT opens with `<datafile>`.
+    The real 2026-08-27 Game Boy download carries both, and a copy the user
+    extracted by hand still carries the second.
+
+    Neither mark is consulted until the file has already failed to parse, and
+    then only for the single expat error a second top-level element causes. A
+    DAT that somebody rezipped as `.xml` parses perfectly well and never
+    reaches here; a truncated download fails with a different error and is
+    reported as what it is. Being wrong in this direction would send a user
+    back to the download page over a file that was merely cut short, so the
+    test stays the narrow one.
+
+    The lone `.xml` is allowed to stand on its own because No-Intro ships an
+    `.xml` for exactly one of the three buttons, and it is the check that
+    would survive them reordering the two top-level elements.
+    """
+    if error.code != JUNK_AFTER_DOCUMENT:
+        return Problem.DAMAGED
+    if source.xml_only or _first_element(source.data or b"") == "header":
+        return Problem.DB_EXPORT
+    return Problem.DAMAGED
+
+
+def _first_element(data: bytes) -> str:
+    """The document element's tag, out of a file that does not parse.
+
+    A pull parser gets it because a DB Export is well-formed right up to the
+    point where it stops being one: the `<header>` opens and closes, and only
+    the `<datafile>` after it is the error. Events already queued survive that
+    failure, so the tag is still there to be read once the exception is
+    caught. Both calls are guarded because either of them can be the one that
+    raises, depending on where expat is holding the buffer when it gives up.
+    """
+    parser = ET.XMLPullParser(events=("start",))
+    try:
+        parser.feed(data)
+    except ET.ParseError:
+        pass
+    try:
+        for _, element in parser.read_events():
+            return element.tag
+    except ET.ParseError:
+        pass
+    return ""
 
 
 def _hex(value: str) -> str:
