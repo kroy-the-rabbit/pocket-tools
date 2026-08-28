@@ -277,6 +277,26 @@ class Dialog(unittest.TestCase):
         self.assertEqual(dlg.tree.get_children(), ())
         self.assertFalse(os.path.exists(p))
 
+    def test_a_dump_turned_down_after_filing_can_still_be_tidied(self):
+        """The exact state a real card got stuck in.
+
+        In the library, turned down, and still on the card. The verdict is
+        REJECTED, which is not actionable, so every button went grey and the
+        file could never be cleared - while cart-dumps was holding the same
+        bytes the whole time.
+        """
+        p = self.put("ZELDA.gb", self.zelda)
+        dlg = self.build()
+        self.tick(dlg, p)
+        dlg.add_ticked()
+        self.tick(dlg, p)
+        dlg.turn_down()
+        self.assertEqual(self.state(dlg, p), "turned down")
+        self.tick(dlg, p)
+        self.assertNotIn("disabled", dlg.clear_btn.state())
+        dlg.clear_ticked()
+        self.assertFalse(os.path.exists(p))
+
     # ----------------------------------------------------------- collisions --
     def collide(self):
         """A different cartridge already filed under the name this one wants."""

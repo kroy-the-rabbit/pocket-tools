@@ -2044,7 +2044,11 @@ class DumpsDialog(tk.Toplevel):
                                         rom_name=identity.name))
             self.proposals[dump.path] = prop
             state, tag = self.STATE.get(prop.verdict, ("?", "idle"))
-            if self.clearable(prop):
+            # Only where the verdict's own label says nothing useful. A
+            # turned-down dump whose card copy can go is still turned down,
+            # and overwriting that with "card copy spare" would hide the
+            # answer somebody gave; the detail line says both.
+            if prop.verdict is dumps.Verdict.FILED and self.clearable(prop):
                 state, tag = "card copy spare", "ready"
             tick = TICK if dump.path in keep else UNTICK
             self.tree.insert("", "end", iid=dump.path,
@@ -2099,8 +2103,17 @@ class DumpsDialog(tk.Toplevel):
         return os.path.join(library.roms_dir(root), prop.rom_name)
 
     def clearable(self, prop) -> bool:
-        """Filed already, and the card is still holding its own copy."""
-        if prop.verdict is not dumps.Verdict.FILED or prop.row is None:
+        """The library holds this dump, and the card still has its own copy.
+
+        Deliberately not a question about the verdict. Asking for FILED was
+        the same dead end in a smaller form: a dump that is in the library and
+        has since been turned down reads as REJECTED, and the card copy - which
+        is provably redundant, because cart-dumps holds the same bytes - could
+        not be cleared. What makes this safe is the library actually holding
+        the file, which is what is checked, and the byte comparison that runs
+        immediately before the delete.
+        """
+        if prop.row is None:
             return False
         kept = prop.row.dump_path(self.root_dir())
         return bool(kept) and os.path.exists(kept) \
@@ -2195,6 +2208,9 @@ class DumpsDialog(tk.Toplevel):
         elif prop.verdict is dumps.Verdict.REJECTED:
             lines.append("Turned down, so it is passed over. Tick it and "
                          "press Offer again to change that.")
+            if self.clearable(prop):
+                lines.append("The library does already hold these bytes, so "
+                             "the copy on the card can still be cleared.")
         else:
             lines.append(f"Would be added as  {prop.rom_name}")
             lines.append(f"and kept as        cart-dumps/{prop.dump_name}")
