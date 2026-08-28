@@ -2201,7 +2201,11 @@ class DatDialog(tk.Toplevel):
     credited to the people who compiled it.
     """
 
-    WIDTH = 92
+    # The prose is what sets this window's width, and the filenames in the
+    # table are long: "Nintendo - Game Boy (Parent-Clone) (20260827-092427)"
+    # is 51 characters before the extension. Wrapping wider costs nothing and
+    # is what stops the column that tells two downloads apart from truncating.
+    WIDTH = 112
 
     def __init__(self, app, catalog) -> None:
         super().__init__(app)
@@ -2233,12 +2237,12 @@ class DatDialog(tk.Toplevel):
         self.tree.heading("system", text="System")
         self.tree.heading("kind", text="What it is")
         self.tree.heading("entries", text="Entries")
-        self.tree.column("#0", width=400, stretch=True)
+        self.tree.column("#0", width=340, stretch=True)
         # "Nintendo - " on every row of a window that is only ever about
         # Nintendo handhelds is 11 characters of nothing, and it was pushing
         # the filename - the part that tells two downloads apart - out of view.
-        self.tree.column("system", width=125, stretch=False)
-        self.tree.column("kind", width=130, stretch=False, anchor="center")
+        self.tree.column("system", width=150, stretch=False)
+        self.tree.column("kind", width=120, stretch=False, anchor="center")
         self.tree.column("entries", width=80, stretch=False, anchor="e")
         self.tree.grid(row=2, column=0, sticky="ew")
         self.tree.tag_configure("dead", foreground=IDLE)
@@ -2318,7 +2322,7 @@ class DatDialog(tk.Toplevel):
                 tick = " "
             self.rows[path] = (dat, already)
             self.tree.insert("", "end", iid=path,
-                             text=f"{tick} {os.path.basename(path)}",
+                             text=f"{tick} {self.filename(path)}",
                              values=(system, kind, entries),
                              tags=(tag,) if tag else ())
         where = ", ".join(self.short(d) for d in download_dirs())
@@ -2332,6 +2336,19 @@ class DatDialog(tk.Toplevel):
                 f"Nothing that looks like a No-Intro DAT in {where}. Press "
                 "Get DATs... to fetch them, or Browse... if you keep them "
                 "somewhere else.", self.WIDTH), foreground=LESSER)
+
+    @staticmethod
+    def filename(path: str) -> str:
+        """The download's name, without the maker the next column repeats.
+
+        Every one of these begins "Nintendo - ", which is 11 characters of the
+        one thing that is the same on every row, in the column whose whole job
+        is telling two downloads apart. The date stamp is the part that
+        matters and it is at the other end.
+        """
+        name = os.path.basename(path)
+        return name[len("Nintendo - "):] if name.startswith("Nintendo - ") \
+            else name
 
     @staticmethod
     def plainly(system: str) -> str:
