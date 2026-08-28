@@ -1142,11 +1142,17 @@ class App(ttk.Frame):
             messagebox.showerror("Cartridge dumps",
                                  f"could not copy it to the card:\n\n{e}")
             return
-        self.status.config(text=f"{game.name} copied to the card. Its cheats "
-                                "can be sent now.", foreground="#060")
-        # The system it landed in has one more ROM than it did, and the count
-        # in the pane would otherwise keep saying otherwise until a rescan.
-        self.ready.pop(game.platform, None)
+        # Emphatically not `self.ready.pop(platform)`. That was the obvious
+        # way to say "this system's list is out of date" and it left the pane
+        # permanently empty: nothing re-reads a system on the strength of the
+        # cache being dropped, so selecting it afterwards cleared the list,
+        # said "reading Game Boy..." and waited for a pass that never came.
+        # The card genuinely has to be read again for a new file to be seen,
+        # and Rescan is what does that.
+        self.status.config(
+            text=f"{game.name} copied to the card. Press Rescan to see it "
+                 f"under {self.platform_name(game.platform)}.",
+            foreground="#060")
         self.refresh_shelf()
 
     def add_cart(self) -> None:

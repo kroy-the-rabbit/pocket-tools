@@ -388,6 +388,9 @@ class Dialog(unittest.TestCase):
         self.library.save(self.lib, idx)
         app = self.ui.App.__new__(self.ui.App)
         app.card = type("C", (), {"root": self.card})()
+        # The real App reads these off the card; a bare instance has neither.
+        app.platform_name = lambda pid: {"gb": "Game Boy"}.get(pid, pid)
+        app.ready = {}
         return app, rom
 
     def test_a_filed_dump_is_offered_as_the_card_rom_it_will_become(self):
@@ -414,6 +417,28 @@ class Dialog(unittest.TestCase):
             self.assertEqual(f.read(), self.tetris)
         self.assertFalse([n for n in os.listdir(os.path.dirname(g.path))
                           if n.endswith(".part")])
+
+    def test_copying_does_not_empty_the_system_it_copied_into(self):
+        """The regression that blanked the Game Boy pane.
+
+        Dropping the platform out of `ready` looks like the right way to say
+        "this list is stale", and it is not: nothing re-reads a system because
+        its cache went away, so selecting it afterwards cleared the pane, said
+        "reading Game Boy..." and waited for a pass that never came. Reading
+        the card again is what finds a new file, and Rescan is what does that.
+        """
+        app, rom = self.shelved()
+        g = self.ui.App.shelf(app)[0]
+        app.games, app.shelf_sizes = [g], {g.name: len(self.tetris)}
+        app.selected_game = lambda: g
+        app.refresh_shelf = lambda: None
+        said = []
+        app.status = type("S", (), {
+            "config": lambda s, **k: said.append(k.get("text", ""))})()
+        app.ready = {"gb": [0, 0], "gba": [0]}
+        self.ui.App.copy_to_card(app)
+        self.assertEqual(app.ready, {"gb": [0, 0], "gba": [0]})
+        self.assertIn("Rescan", said[-1])
 
     def test_a_dump_with_no_name_is_not_offered_to_the_card(self):
         """Unidentified means there is no name to file it under."""
