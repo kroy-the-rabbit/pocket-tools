@@ -374,6 +374,153 @@ corrupt a save. The status line warns when a cartridge selection contains
 written codes, and `cheats/cht check --rom` verifies compare bytes
 against a dump if you have one.
 
+## Cartridge dumps are the other kind of cartridge
+
+The section above is about a cartridge in the slot, which the app never sees.
+This is about one the dumper core has already read into a file, which it sees
+entirely. Everything that makes the first case a warning is absent here, and
+the reason is one sentence: **a dump has an identity and a played cartridge
+does not.**
+
+`dumps.py` is the engine and draws nothing. `ui.DumpsDialog` is the window.
+
+### What the core actually leaves
+
+Not what its format document describes; these are the observed facts of a real
+card. Dumps land flat in `/Assets/carttools/common/`, there is no sidecar, and
+the filename is close to worthless: it is the cartridge title read from a fixed
+header offset and sanitised, so a Game Boy Color cartridge whose title is
+eleven bytes has four bytes of manufacturer code appended - `ZELDA_DIN__AZ7E`.
+Two cartridges that title themselves the same produce the same filename and the
+second overwrites the first, on the card, before the app is involved. The core
+cannot list a directory, so it cannot deduplicate, rename, or recover from any
+of that.
+
+Everything the app does here follows from being the only component that sees
+the bytes after they land.
+
+### Identification is by hash, and only by hash
+
+SHA-1 over the file, looked up across every loaded DAT, and the DAT that holds
+it decides. Not the extension and not the header, which both look like they
+would work:
+
+The core does now write `.gb`, `.gbc` and `.gba` correctly, and on a real card
+all thirty-two agreed with the extension No-Intro gives the same file. That is
+worth knowing and not worth trusting, because the core derives Game Boy from
+Game Boy Color by reading the CGB flag at `0x143`, and **No-Intro's split is an
+editorial judgement rather than a header bit**. The Game Boy set holds *Pokemon
+- Yellow Version ... (CGB+SGB Enhanced)* and the Game Boy Color set holds
+*Pokemon - Gold Version (USA, Europe) (SGB Enhanced) (GB Compatible)*, so the
+flag is wrong in both directions.
+
+The DAT also hands over the filename: `<rom name>` is the game name plus the
+extension, taken verbatim, which is why identifying a dump and naming it are
+the same operation. There is no naming convention to implement.
+
+CRC32 is computed in the same pass and compared with what the core displayed at
+dump time. That is a read-back check the dumper cannot make - its own checksums
+cover bytes leaving the reader, and nothing confirms they reached the card.
+
+### The DAT files, which are not ours to ship
+
+`nointro.py` reads either the DAT or the Parent-Clone DAT, from the zip as
+downloaded, and normalises both to one representation so nothing downstream
+branches on flavour. It indexes on SHA-1 because that is the only hash present
+in every entry of every flavour; sha256 is 96% of the Standard Game Boy set,
+41% of Game Boy Color and 30% of Game Boy Advance, and absent from Parent-Clone
+entirely.
+
+The DB Export cannot be read at all, for two independent reasons: its zip holds
+an `.xml` rather than a `.dat`, and the XML has two top-level elements so no
+conforming parser will take it. That is reported as itself rather than as a
+blank, because "no data loaded" is true and useless to somebody who went to the
+right page and downloaded a real file. A file that merely fails to parse is
+reported as damaged instead - two valid DATs concatenated give the same parser
+error as a DB Export and are told apart on the document's first element.
+
+**Add DAT...** lists what it finds where the browser puts downloads and has a
+button that opens No-Intro's page. Nothing is fetched and nothing is bundled.
+
+### The library, and what is disposable in it
+
+On the computer, chosen once, remembered in `prefs.py`:
+
+```
+<library>/
+    roms/         canonical No-Intro names, extension and all
+    cart-dumps/   originals, under the names the core gave them
+    saves/        nothing writes here yet; the dumper cannot back a save up
+    index.json    the store; delete it and it rebuilds
+```
+
+`index.json` is one versioned JSON file written with the same atomic replace
+`prefs.py` uses, keyed on SHA-1 and never on filename - the filename is exactly
+what collides. It lives in the library rather than with the config, so copying
+the library copies its index and there is no separate backup feature to build.
+
+It is a cache. **Deleting it must lose nothing but time**: a rebuild walks the
+library, re-hashes, and asks the DAT again. Anything that cannot survive that
+is a decision rather than an observation and lives in `prefs.py` - which is
+where a rejection and a pinned cheat file go. `library.Row` is frozen with a
+closed field list so a decision cannot be filed into the index by accident.
+
+### Nothing bulk, and no state without an exit
+
+The window is a list. Tick rows, press the button that names what happens.
+Nothing is written for a row that is not ticked, which is the part that
+matters: the app never decides on its own what to do with a dump, because the
+failure mode of a wrong automatic answer is a dump filed under another game's
+name.
+
+It was a wizard first, one dump at a time behind a chain of modals, and that
+was wrong twice over. It cost four clicks a dump, which over a card of
+thirty-two is a hundred and thirty. Worse, the list shows what is *on the
+card*, so every answered dump vanished from it - a card that filed perfectly
+looked like one where nothing had happened, and the only fix for that is to
+say what the library holds, which the window now does.
+
+**Every state has a way out of it.** This was the real fault and it stranded a
+real file. Once a SHA-1 is in the index the verdict is `FILED`, `FILED` is not
+actionable, and so a dump whose card copy was still there could never be
+cleared - the window called it finished and greyed every button. Turning one
+down was the same trap with no way back at all. So clearing the card copy is
+now offered whenever *the library provably holds the same bytes*, whatever the
+verdict says, and turning a dump down doubles as offering it again.
+
+### The one destructive step
+
+Clearing a dump from the card is the only thing here that deletes anything, and
+the check in front of it is the strongest available rather than the cheapest:
+the bytes, compared, stopping at the first difference. Not a re-hash, which is
+a statement about a digest.
+
+Written out rather than handed to `filecmp`, which caches its answer against
+each file's stat signature - two files of the same length with the same
+timestamp compare equal without being read, which is the wrong kind of thing to
+put in front of a delete. The comparison is also made again immediately before
+the delete rather than trusted from the copy, because minutes and a human
+decision sit between them and the card is removable.
+
+### Cheats come free, because the name does
+
+`match.best()` is hopeless at `ZELDA.gb` and good at `Legend of Zelda, The -
+Link's Awakening (USA, Europe)`, so the enrichment is what makes the matcher the
+app already has work on a dump. No new matching code exists.
+
+Where a clone has no cheat file of its own the parent's name is the second
+attempt - but that is narrower than it sounds. `match.normalize()` strips
+parenthesised tags, so a *regional* clone already finds its parent's file under
+its own name and never reaches the fallback. What reaches it is a clone that
+was retitled, which is a small minority of the clone links in a DAT. Both paths
+are pinned by tests, the regional one deliberately: if `normalize()` ever stops
+stripping tags, the fallback would quietly start carrying every regional clone.
+
+**Cheats...** shows the match, every ranked alternative with its score and
+whether it is yours or libretro's, and pins one if you want a different answer.
+The pin is keyed on the canonical name - safe only because that name is
+canonical, since the core's own names collide and this one cannot.
+
 ## How it decides things
 
 **The file on the card is the state.** There is no separate database. Opening a

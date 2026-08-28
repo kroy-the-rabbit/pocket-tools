@@ -16,10 +16,12 @@ TurboGrafx-16 cores.
 > Back your saves up before using cheats on anything you care about, and read
 > [Cartridges](#cartridges-read-this-part) before using them on one.
 >
-> **Game Boy Advance and PC Engine are SD card only.** Their cores do not
-> support cartridges yet, so cheats for those two go beside a ROM on the card.
-> See [PC Engine](#pc-engine--turbografx-16-came-last) and
-> [Game Boy Advance](#game-boy-advance-writes-two-files).
+> **Game Boy Advance and PC Engine are SD card only** for *playing* a
+> cartridge: their cores do not support that yet, so cheats for those two go
+> beside a ROM on the card. See [PC Engine](#pc-engine--turbografx-16-came-last)
+> and [Game Boy Advance](#game-boy-advance-writes-two-files). Dumping a
+> cartridge is a different thing and Game Boy Advance does it — see
+> [Cartridge dumps](#cartridge-dumps-which-are-the-opposite-case).
 
 Three panes: the systems on the card, the games in each, and the cheats for the
 selected game. Tick what you want and press **Send to Pocket**. The file next to
@@ -214,6 +216,62 @@ compare byte against the ROM itself. A cartridge gives you none of that.
 **Add cartridge...** offers Game Boy and Game Boy Color and nothing else. Game
 Boy Advance and PC Engine are SD card only: cartridges are unsupported on both
 until their cores support them.
+
+## Cartridge dumps, which are the opposite case
+
+Everything above is about a cartridge you are *playing*. There is a second
+thing also called a cartridge, and it is worth keeping the two apart because
+they are opposites.
+
+**A cartridge you play has no identity.** The Pocket is running it, no file on
+the card represents it, you type its name yourself, and the app takes your word
+for what it is. That is the whole reason the section above is a warning.
+
+**A cartridge dump does have one.** The dumper core reads a cartridge and
+writes a ROM image to the card. That is bytes, so it can be hashed, identified,
+named correctly and matched to a cheat file with nothing taken on trust.
+
+**Cartridge dumps...** on the card line opens that list. What it is for is the
+names: the core reads a title out of a fixed header offset and sanitises it, so
+Link's Awakening arrives as `ZELDA.gb`, Oracle of Seasons as
+`ZELDA_DIN__AZ7E.gbc` with four bytes of manufacturer code stuck to it, and two
+cartridges that title themselves the same overwrite each other. The core cannot
+list a directory, so it cannot notice any of that. The app can, because it is
+the only part that ever sees the bytes after they land.
+
+It needs No-Intro's data to do it. **Add DAT...** lists the files it finds
+where your browser puts downloads, says which system and flavour each one is,
+and has a button that opens No-Intro's download page. Take the DAT or the
+Parent-Clone DAT for each system; the DB Export is a different format and
+cannot be read. Nothing is fetched for you and nothing is bundled.
+
+Then it is a list you work in. Tick what you want and press the button that
+says what happens to it:
+
+| Button | What it does |
+|---|---|
+| **Add to library** | copies the dump to your library under its real name, and keeps the core's original beside it as evidence of what was actually produced |
+| **Clear from card** | deletes the card's copy, and only after comparing it byte for byte against the one in your library |
+| **Cheats...** | which libretro cheat file the dump maps to, every alternative, and a way to pin a different one |
+| **Turn down** | pass it over. It doubles as **Offer again**, because a decision you can never take back is a trap rather than a decision |
+
+Nothing is written for a row you did not tick, and identification is by SHA-1
+against the DAT rather than by the filename or the extension. That matters more
+than it looks: the core tells Game Boy from Game Boy Color using the CGB flag
+in the header, and No-Intro's split between those two systems is an editorial
+judgement rather than a header bit. Pokemon Yellow is colour-enhanced and lives
+in the Game Boy set; Pokemon Gold is Game Boy compatible and lives in the Game
+Boy Color one. The hash is the only thing that gets both right.
+
+**Your library lives on your computer, not on the card**, and you choose where.
+Keeping the card copy is never required — but nothing is deleted from it until
+the replacement exists and has been compared byte for byte, and the comparison
+is made again immediately before the delete, so a card swapped in between
+refuses instead of losing a file.
+
+Game Boy, Game Boy Color and Game Boy Advance all dump. This is a different
+thing from the cartridge *play* support above, which is Game Boy and Game Boy
+Color only.
 
 ## What goes wrong, and how
 
