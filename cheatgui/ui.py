@@ -28,9 +28,11 @@ import core as core_mod
 import db
 import dumps
 import library
+import match
 import meter
 import model
 import nointro
+import prefs
 import reveal
 import timing
 import version
@@ -1835,294 +1837,6 @@ class RomsDialog(tk.Toplevel):
         self.note.config(foreground="#060", text=f"copied  {path}")
 
 
-class DumpsDialog(tk.Toplevel):
-    """The cartridge dumps on a card, one decision at a time.
-
-    The dumper writes a flat pile of files named from a fixed header offset,
-    so `ZELDA.gb` is Link's Awakening and `ZELDA_DIN__AZ7E.gbc` is Oracle of
-    Seasons with four bytes of manufacturer code stuck to it. This window is
-    where those become names that mean something, and it exists because the
-    app is the only component that ever sees the bytes after they land: the
-    core cannot list a directory, so it cannot deduplicate, cannot rename, and
-    cannot recover from a mess.
-
-    Nothing here is bulk. Every dump is presented on its own with what was
-    found, what would be done and what it would be called, and nothing is
-    written until it is approved - a dump that identifies cleanly still asks.
-    The reason is the step that empties the card: the failure mode of a wrong
-    automatic answer is a dump filed under another game's name, which is
-    exactly the confusion this feature exists to remove.
-    """
-
-    # What each verdict looks like in the table, and which tag colours it.
-    STATE = {
-        dumps.Verdict.FILE:         ("ready to file", "ready"),
-        dumps.Verdict.COLLIDES:     ("name taken", "lesser"),
-        dumps.Verdict.FILED:        ("already filed", "idle"),
-        dumps.Verdict.REJECTED:     ("turned down", "idle"),
-        dumps.Verdict.MISSING:      ("filed copy is gone", "lesser"),
-        dumps.Verdict.UNIDENTIFIED: ("not in any DAT", "lesser"),
-        dumps.Verdict.UNREADABLE:   ("cannot be read", "fault"),
-    }
-
-    def __init__(self, app, card_root: str, catalog, found=None) -> None:
-        super().__init__(app)
-        self.app = app
-        self.card_root = card_root
-        self.catalog = catalog
-        # Hashed once, by whoever opened this window, and kept. Re-reading the
-        # card after every answer would cost the whole 28 seconds again, and
-        # nothing an answer changes is on the card: the bytes of a dump do not
-        # move because it was filed. `propose()` re-reads only the small local
-        # file that is standing in a name's way.
-        self.found = list(dumps.scan(card_root) if found is None else found)
-        self.proposals: dict[str, dumps.Proposal] = {}
-        self.title("Cartridge dumps")
-        self.transient(app)
-        self.columnconfigure(0, weight=1)
-
-        body = ttk.Frame(self, padding=12)
-        body.grid(row=0, column=0, sticky="nsew")
-        body.columnconfigure(0, weight=1)
-
-        ttk.Label(body, text="Dumps this card is holding").grid(
-            row=0, column=0, sticky="w")
-        ttk.Label(body, foreground=QUIET,
-                  text=dumps.dump_dir(card_root)).grid(
-            row=1, column=0, sticky="w", pady=(1, 8))
-
-        cols = ("state", "name")
-        self.tree = ttk.Treeview(body, columns=cols, show="tree headings",
-                                 selectmode="browse", height=10)
-        self.tree.heading("#0", text="On the card")
-        self.tree.heading("state", text="What it is")
-        self.tree.heading("name", text="What it would be called")
-        self.tree.column("#0", width=200, stretch=False)
-        self.tree.column("state", width=150, stretch=False, anchor="center")
-        self.tree.column("name", width=430, stretch=True)
-        self.tree.grid(row=2, column=0, sticky="ew")
-        self.tree.tag_configure("fault", foreground=FAULT)
-        self.tree.tag_configure("lesser", foreground=LESSER)
-        self.tree.tag_configure("ready", foreground=READY)
-        self.tree.tag_configure("idle", foreground=IDLE)
-        self.tree.bind("<<TreeviewSelect>>", self.on_pick)
-
-        # Where the library is, and the DATs it is being identified against.
-        # Both are things the user supplies and neither has a default, so both
-        # say what is missing rather than failing later with less to go on.
-        self.lib_label = ttk.Label(body, foreground=QUIET, wraplength=760,
-                                   justify="left")
-        self.lib_label.grid(row=3, column=0, sticky="w", pady=(8, 0))
-        self.dat_label = ttk.Label(body, foreground=QUIET, wraplength=760,
-                                   justify="left")
-        self.dat_label.grid(row=4, column=0, sticky="w", pady=(2, 0))
-
-        self.detail = ttk.Label(body, foreground=QUIET, wraplength=760,
-                                justify="left")
-        self.detail.grid(row=5, column=0, sticky="w", pady=(8, 0))
-
-        row = ttk.Frame(body)
-        row.grid(row=6, column=0, sticky="ew", pady=(10, 0))
-        ttk.Button(row, text="Close", command=self.destroy).pack(side="right")
-        self.file_btn = ttk.Button(row, text="File it...", width=11,
-                                   command=self.file_one, state="disabled")
-        self.file_btn.pack(side="right", padx=(0, 4))
-        self.reject_btn = ttk.Button(row, text="Turn down", width=11,
-                                     command=self.turn_down, state="disabled")
-        self.reject_btn.pack(side="right", padx=(0, 4))
-        ttk.Button(row, text="Add DAT...", width=11,
-                   command=self.add_dat).pack(side="left")
-        ttk.Button(row, text="Library...", width=11,
-                   command=self.pick_library).pack(side="left", padx=(4, 0))
-        self.lib_open = open_button_for(row, library.path)
-        if self.lib_open is not None:
-            self.lib_open.pack(side="left", padx=(4, 0))
-
-        self.refill()
-        self.bind("<Escape>", lambda _e: self.destroy())
-        self.grab_set()
-        self.wait_window(self)
-
-    # ------------------------------------------------------------- the list --
-    def refill(self) -> None:
-        """Recompute every proposal and redraw. Writes nothing.
-
-        Called again after anything that could change an answer - a DAT added,
-        a library chosen, a dump filed - because a proposal is a statement
-        about the card and the library at one moment, and all three of those
-        change it.
-        """
-        self.tree.delete(*self.tree.get_children())
-        self.proposals.clear()
-        root = library.path()
-        self.lib_label.config(
-            text=(f"Library: {root}" if root else
-                  "No library chosen yet. Press Library... to say where dumps "
-                  "and saves should be kept; nothing is filed until you do."),
-            foreground=QUIET if root else LESSER)
-        self.dat_label.config(text=dumps.dat_note(self.catalog))
-        retune_open(self.lib_open, root)
-
-        index = library.load(root) if root else None
-        for dump in self.found:
-            identity = dumps.identify(dump, self.catalog)
-            prop = (dumps.propose(dump, identity, root, index) if root
-                    else dumps.Proposal(dump=dump, identity=identity, root="",
-                                        rom_name=identity.name))
-            self.proposals[dump.path] = prop
-            state, tag = self.STATE.get(prop.verdict, ("?", "idle"))
-            self.tree.insert("", "end", iid=dump.path, text=dump.name,
-                             values=(state, prop.rom_name or ""), tags=(tag,))
-        # Land on the first dump that needs an answer rather than the first one
-        # listed, so the window opens on the question it was opened to ask. A
-        # card whose dumps are all settled selects the first row anyway, which
-        # is what makes it say so instead of showing an empty detail.
-        rows = list(self.tree.get_children())
-        first = next((i for i in rows if self.proposals[i].actionable), None)
-        if first or rows:
-            self.tree.selection_set(first or rows[0])
-            self.tree.focus(first or rows[0])
-        self.on_pick()
-
-    def picked(self) -> dumps.Proposal | None:
-        sel = self.tree.selection()
-        return self.proposals.get(sel[0]) if sel else None
-
-    def on_pick(self, _evt=None) -> None:
-        prop = self.picked()
-        if prop is None:
-            self.detail.config(text="")
-            self.file_btn.state(["disabled"])
-            self.reject_btn.state(["disabled"])
-            return
-        self.detail.config(text=self.describe(prop))
-        can = prop.actionable and bool(library.path())
-        self.file_btn.state(["!disabled"] if can else ["disabled"])
-        self.reject_btn.state(
-            ["!disabled"] if prop.verdict is not dumps.Verdict.REJECTED
-            else ["disabled"])
-
-    def describe(self, prop: dumps.Proposal) -> str:
-        """What would happen to this dump, in the words it would happen in."""
-        d = prop.dump
-        lines = [f"{d.name}   {d.size:,} bytes   sha1 {d.sha1[:12]}..."]
-        if prop.verdict is dumps.Verdict.UNIDENTIFIED:
-            lines.append(
-                "No loaded DAT has these bytes. That is a bad dump, a revision "
-                "the DAT does not carry, or a reproduction cartridge, and "
-                "nothing here can tell those apart - so nothing is offered "
-                "automatically.")
-        elif prop.verdict is dumps.Verdict.UNREADABLE:
-            lines.append(prop.note or "Something is in the way of reading it.")
-        elif prop.verdict is dumps.Verdict.MISSING:
-            lines.append(
-                "This is in the index but its filed copy is gone. It is "
-                "reported rather than cleaned up: the app does not remove "
-                "things it did not just write.")
-        elif prop.verdict is dumps.Verdict.FILED:
-            lines.append("Already in the library, byte for byte. Nothing to do.")
-        elif prop.verdict is dumps.Verdict.REJECTED:
-            lines.append("Turned down before, so it is not asked about again.")
-        else:
-            lines.append(f"Would be filed as  {prop.rom_name}")
-            lines.append(f"and kept as        cart-dumps/{prop.dump_name}")
-            if prop.collides:
-                lines.append("That name is taken by different bytes; filing it "
-                             "will ask which one you want.")
-        # The note is the engine's one-word summary, which is worth showing
-        # only where the paragraph above has not already said it at length.
-        if prop.note and prop.verdict in (dumps.Verdict.FILE,
-                                          dumps.Verdict.COLLIDES):
-            lines.append(prop.note)
-        return "\n".join(textwrap.fill(x, 96) for x in lines)
-
-    # --------------------------------------------------------------- acting --
-    def file_one(self) -> None:
-        """File the selected dump, asking about a collision if there is one."""
-        prop = self.picked()
-        if prop is None or not prop.actionable:
-            return
-        root = library.path()
-        index = library.load(root)
-        choice = dumps.Choice.KEEP_BOTH
-        if prop.collides:
-            choice = CollisionDialog(self, prop).result
-            if choice is None:
-                return
-        filing = dumps.commit(prop, index, choice=choice)
-        if filing.discarded:
-            self.refill()
-            return
-        if not filing.ok:
-            messagebox.showerror("Cartridge dumps", filing.problem or
-                                 "nothing was filed")
-            self.refill()
-            return
-        library.save(root, index)
-        # Only now is there something to compare the card against, which is
-        # why the removal is a second question rather than part of the first.
-        if filing.verified:
-            gone = RemoveDialog(self, filing).removed
-            if gone:
-                # It is not on the card any more, so it is not a row in a
-                # window about what is on the card. The library's index is
-                # what remembers it now.
-                self.found = [d for d in self.found
-                              if d.path != prop.dump.path]
-        self.refill()
-
-    def turn_down(self) -> None:
-        """Record that this dump was refused, and stop asking about it."""
-        prop = self.picked()
-        if prop is None:
-            return
-        dumps.reject(prop.dump)
-        self.refill()
-
-    def pick_library(self) -> None:
-        """Choose where dumps and saves are kept, and remember it."""
-        chosen = filedialog.askdirectory(
-            parent=self, title="Where should dumps and saves be kept?",
-            mustexist=True)
-        if not chosen:
-            return
-        library.set_path(chosen)
-        library.create(chosen)
-        self.refill()
-
-    def add_dat(self) -> None:
-        """The No-Intro window, which finds the downloads rather than asking.
-
-        This used to be a file chooser pointed at the whole filesystem, which
-        was the wrong question: there are three of these files, their names
-        are fixed by the site that issues them, and they are in the directory
-        the browser puts downloads in.
-        """
-        if DatDialog(self, self.catalog).loaded:
-            self.refill()
-
-    @staticmethod
-    def why(dat, path: str) -> str:
-        """Name the mistake and the fix, rather than reporting a blank."""
-        name = os.path.basename(path)
-        if dat.problem is nointro.Problem.DB_EXPORT:
-            return (f"{name} is the DB Export, which carries its data in a "
-                    "different form this app cannot read.\n\n"
-                    "Go back to the same page and take the DAT, or the "
-                    "Parent-Clone DAT. Either one works; Parent-Clone covers "
-                    "a few hundred more unlicensed and aftermarket "
-                    "cartridges.")
-        if dat.problem is nointro.Problem.WRONG_SYSTEM:
-            return (f"{name} is a DAT, but not for a system this app handles. "
-                    "It wants Game Boy, Game Boy Color or Game Boy Advance.")
-        if dat.problem is nointro.Problem.MISSING:
-            return f"{name} is not there any more."
-        if dat.problem is nointro.Problem.NOT_A_DAT:
-            return f"{name} does not hold a DAT at all."
-        return (f"{name} could not be read. If the download was interrupted, "
-                "fetching it again is the fix.")
-
-
 DATOMATIC = "https://datomatic.no-intro.org/"
 
 
@@ -2159,11 +1873,12 @@ def native_open(parent, title: str) -> str | None:
     does. Anything unexpected falls back to Tk rather than to nothing.
     """
     if sys.platform not in ("win32", "darwin"):
-        for cmd, args in (("kdialog", ["--getopenfilename", os.path.expanduser("~"),
+        for cmd, args in (("kdialog", ["--getopenfilename",
+                                       os.path.expanduser("~"),
                                        "*.zip *.dat *.xml|DAT files"]),
-                          ("zenity", ["--file-selection",
-                                      "--title", title,
-                                      "--file-filter=DAT files | *.zip *.dat *.xml",
+                          ("zenity", ["--file-selection", "--title", title,
+                                      "--file-filter=DAT files | "
+                                      "*.zip *.dat *.xml",
                                       "--file-filter=Every file | *"])):
             if shutil.which(cmd) is None:
                 continue
@@ -2181,6 +1896,540 @@ def native_open(parent, title: str) -> str | None:
         parent=parent, title=title,
         filetypes=[("A DAT, or the zip it came in", "*.zip *.dat *.xml"),
                    ("Every file", "*")]) or None
+
+
+class DumpsDialog(tk.Toplevel):
+    """The cartridge dumps on a card, as a list you work in.
+
+    The dumper writes a flat pile of files named from a fixed header offset,
+    so `ZELDA.gb` is Link's Awakening and `ZELDA_DIN__AZ7E.gbc` is Oracle of
+    Seasons with four bytes of manufacturer code stuck to it. This window is
+    where those become names that mean something.
+
+    It is a list and not a wizard. The first version asked about one dump at a
+    time behind a chain of modals, which over a card of thirty-two dumps was a
+    hundred and thirty clicks, and it showed only what was still on the card -
+    so every answered dump vanished and a card that had filed perfectly looked
+    like one where nothing had happened. Tick what you want and press the
+    button that says what will happen to it. Nothing is written for a row that
+    is not ticked, which is the part of "nothing is bulk" that was worth
+    keeping: the app still never decides on its own what to do with a dump.
+
+    Every state has a way out of it. That was the other fault: once a SHA-1 was
+    in the index the verdict was FILED, FILED was not actionable, and a dump
+    whose card copy was still there could never be cleared - the window called
+    it finished and greyed everything. Turning one down was worse, because
+    REJECTED did the same and there was no way to change your mind.
+    """
+
+    STATE = {
+        dumps.Verdict.FILE:         ("ready", "ready"),
+        dumps.Verdict.COLLIDES:     ("name taken", "lesser"),
+        dumps.Verdict.FILED:        ("in the library", "idle"),
+        dumps.Verdict.REJECTED:     ("turned down", "idle"),
+        dumps.Verdict.MISSING:      ("filed copy gone", "lesser"),
+        dumps.Verdict.UNIDENTIFIED: ("not in any DAT", "lesser"),
+        dumps.Verdict.UNREADABLE:   ("cannot be read", "fault"),
+    }
+
+    def __init__(self, app, card_root: str, catalog, found=None) -> None:
+        super().__init__(app)
+        self.app = app
+        self.card_root = card_root
+        self.catalog = catalog
+        # Hashed once, by whoever opened this window, and kept. Re-reading the
+        # card after every answer would cost the whole scan again -- 28 seconds
+        # for a real card of 32 dumps over USB -- and nothing an answer changes
+        # is on the card: the bytes of a dump do not move because it was filed.
+        self.found = list(dumps.scan(card_root) if found is None else found)
+        self.proposals: dict[str, dumps.Proposal] = {}
+        self.title("Cartridge dumps")
+        self.transient(app)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        body = ttk.Frame(self, padding=12)
+        body.grid(row=0, column=0, sticky="nsew")
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(2, weight=1)
+
+        ttk.Label(body, text="Dumps this card is holding").grid(
+            row=0, column=0, sticky="w")
+        ttk.Label(body, foreground=QUIET, text=dumps.dump_dir(card_root)).grid(
+            row=1, column=0, sticky="w", pady=(1, 8))
+
+        cols = ("state", "name", "cheats")
+        self.tree = ttk.Treeview(body, columns=cols, show="tree headings",
+                                 selectmode="browse", height=12)
+        self.tree.heading("#0", text="On the card")
+        self.tree.heading("state", text="What it is")
+        self.tree.heading("name", text="What it would be called")
+        self.tree.heading("cheats", text="Cheats")
+        self.tree.column("#0", width=210, stretch=False)
+        self.tree.column("state", width=120, stretch=False, anchor="center")
+        self.tree.column("name", width=400, stretch=True)
+        self.tree.column("cheats", width=210, stretch=False)
+        self.tree.grid(row=2, column=0, sticky="nsew")
+        self.tree.tag_configure("fault", foreground=FAULT)
+        self.tree.tag_configure("lesser", foreground=LESSER)
+        self.tree.tag_configure("ready", foreground=READY)
+        self.tree.tag_configure("idle", foreground=IDLE)
+        self.tree.bind("<Button-1>", self.click)
+        self.tree.bind("<<TreeviewSelect>>", self.on_pick)
+
+        self.lib_label = ttk.Label(body, foreground=QUIET, justify="left")
+        self.lib_label.grid(row=3, column=0, sticky="w", pady=(8, 0))
+        self.dat_label = ttk.Label(body, foreground=QUIET, justify="left")
+        self.dat_label.grid(row=4, column=0, sticky="w", pady=(2, 0))
+        self.detail = ttk.Label(body, foreground=QUIET, justify="left")
+        self.detail.grid(row=5, column=0, sticky="w", pady=(8, 0))
+
+        row = ttk.Frame(body)
+        row.grid(row=6, column=0, sticky="ew", pady=(10, 0))
+        ttk.Button(row, text="Close", command=self.destroy).pack(side="right")
+        # Named for what they do to what is ticked. "File it" said nothing:
+        # file it where, as what?
+        self.add_btn = ttk.Button(row, text="Add to library", width=15,
+                                  command=self.add_ticked, state="disabled")
+        self.add_btn.pack(side="right", padx=(0, 4))
+        self.clear_btn = ttk.Button(row, text="Clear from card", width=15,
+                                    command=self.clear_ticked,
+                                    state="disabled")
+        self.clear_btn.pack(side="right", padx=(0, 4))
+        self.cheat_btn = ttk.Button(row, text="Cheats...", width=10,
+                                    command=self.show_cheat, state="disabled")
+        self.cheat_btn.pack(side="right", padx=(0, 4))
+        self.no_btn = ttk.Button(row, text="Turn down", width=11,
+                                 command=self.turn_down, state="disabled")
+        self.no_btn.pack(side="right", padx=(0, 4))
+        ttk.Button(row, text="All", width=5,
+                   command=lambda: self.tick_all(True)).pack(side="left")
+        ttk.Button(row, text="None", width=6,
+                   command=lambda: self.tick_all(False)).pack(
+            side="left", padx=(4, 0))
+        ttk.Button(row, text="Add DAT...", width=11,
+                   command=self.add_dat).pack(side="left", padx=(12, 0))
+        ttk.Button(row, text="Library...", width=11,
+                   command=self.pick_library).pack(side="left", padx=(4, 0))
+        self.lib_open = open_button_for(row, library.path)
+        if self.lib_open is not None:
+            self.lib_open.pack(side="left", padx=(4, 0))
+
+        self.refill()
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.grab_set()
+        self.wait_window(self)
+
+    # ------------------------------------------------------------- the list --
+    def root_dir(self) -> str:
+        return library.path() or ""
+
+    def refill(self, keep: set[str] | None = None) -> None:
+        """Recompute every proposal and redraw. Writes nothing.
+
+        The ticks are carried across, because a redraw happens after every
+        action and losing the selection each time would make working through a
+        card by hand impossible.
+        """
+        keep = self.ticked() if keep is None else keep
+        self.tree.delete(*self.tree.get_children())
+        self.proposals.clear()
+        root = self.root_dir()
+        index = library.load(root) if root else None
+
+        for dump in self.found:
+            identity = dumps.identify(dump, self.catalog)
+            prop = (dumps.propose(dump, identity, root, index) if root
+                    else dumps.Proposal(dump=dump, identity=identity, root="",
+                                        rom_name=identity.name))
+            self.proposals[dump.path] = prop
+            state, tag = self.STATE.get(prop.verdict, ("?", "idle"))
+            if self.clearable(prop):
+                state, tag = "card copy spare", "ready"
+            tick = TICK if dump.path in keep else UNTICK
+            self.tree.insert("", "end", iid=dump.path,
+                             text=f"{tick} {dump.name}",
+                             values=(state, prop.rom_name or "",
+                                     self.cheat_of(prop).name or "-"),
+                             tags=(tag,))
+        rows = list(self.tree.get_children())
+        if rows and not self.tree.selection():
+            self.tree.selection_set(rows[0])
+            self.tree.focus(rows[0])
+        self.describe_library(root, index)
+        self.dat_label.config(text=dumps.dat_note(self.catalog))
+        retune_open(self.lib_open, root)
+        self.on_pick()
+
+    def describe_library(self, root: str, index) -> None:
+        """Where the library is and how much is in it.
+
+        The count is the whole point of the line. Without it a window that had
+        just filed thirty-three dumps looked exactly like one that had filed
+        nothing, because the rows it filed are gone from the card and this list
+        is about the card.
+        """
+        if not root:
+            self.lib_label.config(
+                text="No library chosen yet. Press Library... to say where "
+                     "dumps should be kept; nothing is added until you do.",
+                foreground=LESSER)
+            return
+        held = len(index) if index is not None else 0
+        self.lib_label.config(
+            text=f"Library: {root}   -   {held} "
+                 f"dump{'' if held == 1 else 's'} already in it",
+            foreground=QUIET)
+
+    def cheat_of(self, prop) -> dumps.Cheat:
+        """The cheat file this dump maps to, pinned or matched."""
+        return dumps.cheat(prop.identity, self.rom_path(prop))
+
+    def rom_path(self, prop) -> str | None:
+        """Where the canonical copy is, or would be. The cheat override key.
+
+        Keyed on the canonical name whether or not the dump has been filed
+        yet, so a choice made before adding it still applies afterwards. That
+        is only safe because the name is canonical: the core's own names
+        collide and this one cannot.
+        """
+        root = self.root_dir()
+        if not root or not prop.rom_name:
+            return None
+        return os.path.join(library.roms_dir(root), prop.rom_name)
+
+    def clearable(self, prop) -> bool:
+        """Filed already, and the card is still holding its own copy."""
+        if prop.verdict is not dumps.Verdict.FILED or prop.row is None:
+            return False
+        kept = prop.row.dump_path(self.root_dir())
+        return bool(kept) and os.path.exists(kept) \
+            and os.path.exists(prop.dump.path)
+
+    # ------------------------------------------------------------ selecting --
+    def click(self, evt) -> None:
+        """A click in the first column is a tick; anywhere else selects."""
+        iid = self.tree.identify_row(evt.y)
+        if not iid or self.tree.identify_region(evt.x, evt.y) == "heading":
+            return
+        if self.tree.identify_column(evt.x) == "#0":
+            self.flip(iid)
+
+    def flip(self, iid: str) -> None:
+        text = self.tree.item(iid, "text")
+        self.tree.item(iid, text=(UNTICK if text.startswith(TICK) else TICK)
+                       + text[1:])
+        self.on_pick()
+
+    def tick_all(self, on: bool) -> None:
+        """Tick everything a button could act on, or nothing."""
+        for iid in self.tree.get_children():
+            prop = self.proposals[iid]
+            worth = prop.actionable or self.clearable(prop)
+            text = self.tree.item(iid, "text")
+            want = TICK if (on and worth) else UNTICK
+            self.tree.item(iid, text=want + text[1:])
+        self.on_pick()
+
+    def ticked(self) -> set[str]:
+        return {i for i in self.tree.get_children()
+                if str(self.tree.item(i, "text")).startswith(TICK)}
+
+    def chosen(self, test) -> list:
+        return [self.proposals[i] for i in sorted(self.ticked())
+                if test(self.proposals[i])]
+
+    def picked(self) -> dumps.Proposal | None:
+        sel = self.tree.selection()
+        return self.proposals.get(sel[0]) if sel else None
+
+    def on_pick(self, _evt=None) -> None:
+        prop = self.picked()
+        self.detail.config(text=self.describe(prop) if prop else "")
+        addable = len(self.chosen(lambda p: p.actionable))
+        clearing = len(self.chosen(self.clearable))
+        refusing = len(self.chosen(
+            lambda p: p.verdict is not dumps.Verdict.REJECTED))
+        rejected = len(self.chosen(
+            lambda p: p.verdict is dumps.Verdict.REJECTED))
+        self.add_btn.config(text=f"Add to library ({addable})" if addable
+                            else "Add to library")
+        self.add_btn.state(["!disabled"] if addable and self.root_dir()
+                           else ["disabled"])
+        self.clear_btn.config(text=f"Clear from card ({clearing})" if clearing
+                              else "Clear from card")
+        self.clear_btn.state(["!disabled"] if clearing else ["disabled"])
+        # One button for both directions, because they are the same decision
+        # and a rejection with no way back was the bug that made this window
+        # feel stuck.
+        self.no_btn.config(text="Offer again" if rejected and not refusing
+                           else "Turn down")
+        self.no_btn.state(["!disabled"] if (refusing or rejected)
+                          else ["disabled"])
+        self.cheat_btn.state(["!disabled"]
+                             if prop is not None and prop.identity.matched
+                             and self.root_dir() else ["disabled"])
+
+    def describe(self, prop: dumps.Proposal) -> str:
+        d = prop.dump
+        lines = [f"{d.name}   {d.size:,} bytes   sha1 {d.sha1[:12]}..."]
+        if prop.verdict is dumps.Verdict.UNIDENTIFIED:
+            lines.append(
+                "No loaded DAT has these bytes. That is a bad dump, a revision "
+                "the DAT does not carry, or a reproduction cartridge, and "
+                "nothing here can tell those apart - so nothing is offered "
+                "automatically.")
+        elif prop.verdict is dumps.Verdict.UNREADABLE:
+            lines.append(prop.note or "Something is in the way of reading it.")
+        elif prop.verdict is dumps.Verdict.MISSING:
+            lines.append(
+                "This is in the index but its filed copy is gone. It is "
+                "reported rather than cleaned up: the app does not remove "
+                "things it did not just write.")
+        elif prop.verdict is dumps.Verdict.FILED:
+            lines.append(
+                "Already in the library, byte for byte. The copy on the card "
+                "is the spare one and Clear from card will delete it."
+                if self.clearable(prop) else
+                "Already in the library, byte for byte.")
+        elif prop.verdict is dumps.Verdict.REJECTED:
+            lines.append("Turned down, so it is passed over. Tick it and "
+                         "press Offer again to change that.")
+        else:
+            lines.append(f"Would be added as  {prop.rom_name}")
+            lines.append(f"and kept as        cart-dumps/{prop.dump_name}")
+            if prop.collides:
+                lines.append("That name is taken by different bytes; adding "
+                             "it will ask which one you want.")
+        return "\n".join(textwrap.fill(x, 100) for x in lines)
+
+    # --------------------------------------------------------------- acting --
+    def add_ticked(self) -> None:
+        """Add every ticked dump to the library, and say what happened."""
+        root = self.root_dir()
+        todo = self.chosen(lambda p: p.actionable)
+        if not root or not todo:
+            return
+        added, failed, cleared = 0, [], []
+        for prop in todo:
+            choice = dumps.Choice.KEEP_BOTH
+            if prop.collides:
+                choice = CollisionDialog(self, prop).result
+                if choice is None:
+                    continue
+            index = library.load(root)
+            filing = dumps.commit(prop, index, choice=choice)
+            if filing.discarded:
+                continue
+            if not filing.ok:
+                failed.append(f"{prop.dump.name}: {filing.problem}")
+                continue
+            library.save(root, index)
+            added += 1
+        self.report(f"{added} added to the library", failed)
+        self.refill(keep=set())
+
+    def clear_ticked(self) -> None:
+        """Delete the card's copy of dumps the library already holds.
+
+        Byte for byte against the copy in cart-dumps immediately before each
+        delete, so a card swapped for another one refuses rather than losing a
+        file. This is the only destructive thing in the window.
+        """
+        todo = self.chosen(self.clearable)
+        if not todo:
+            return
+        names = "\n".join(p.dump.name for p in todo[:12])
+        more = f"\nand {len(todo) - 12} more" if len(todo) > 12 else ""
+        if not messagebox.askyesno(
+                "Clear from card",
+                f"Delete {len(todo)} file{'' if len(todo) == 1 else 's'} from "
+                f"the card?\n\n{names}{more}\n\nThe library already holds each "
+                "of these, and every one is compared byte for byte before it "
+                "goes.", parent=self):
+            return
+        gone, failed = 0, []
+        for prop in todo:
+            kept = prop.row.dump_path(self.root_dir())
+            done = dumps.remove_from_card(
+                dumps.Filing(prop, ok=True, dump_path=kept, verified=True))
+            if done.removed:
+                gone += 1
+                self.found = [d for d in self.found
+                              if d.path != prop.dump.path]
+            else:
+                failed.append(f"{prop.dump.name}: {done.problem}")
+        self.report(f"{gone} cleared from the card", failed)
+        self.refill(keep=set())
+
+    def turn_down(self) -> None:
+        """Refuse the ticked dumps, or take a refusal back."""
+        rejected = self.chosen(lambda p: p.verdict is dumps.Verdict.REJECTED)
+        others = self.chosen(lambda p: p.verdict is not dumps.Verdict.REJECTED)
+        for prop in others:
+            dumps.reject(prop.dump)
+        if not others:
+            for prop in rejected:
+                dumps.unreject(prop.dump)
+        self.refill()
+
+    def show_cheat(self) -> None:
+        """Which cheat file this dump maps to, and a way to change it."""
+        prop = self.picked()
+        if prop is None or not prop.identity.matched:
+            return
+        CheatDialog(self, prop, self.rom_path(prop))
+        self.refill()
+
+    def report(self, done: str, failed: list[str]) -> None:
+        """Say what happened. The list itself cannot: those rows are gone."""
+        if failed:
+            messagebox.showwarning(
+                "Cartridge dumps",
+                f"{done}.\n\nThese did not:\n\n" + "\n".join(failed[:12]),
+                parent=self)
+            return
+        # The main window's status line when there is one. Asked for rather
+        # than assumed: this dialog is built directly in tests and from a
+        # parent that is not the App, and a missing status bar is not a reason
+        # to lose the work that was just done.
+        bar = getattr(self.app, "status", None)
+        if bar is not None:
+            bar.config(text=done, foreground="#060")
+
+    def pick_library(self) -> None:
+        """Choose where dumps are kept, and remember it."""
+        chosen = filedialog.askdirectory(
+            parent=self, title="Where should cartridge dumps be kept?",
+            mustexist=True)
+        if not chosen:
+            return
+        library.set_path(chosen)
+        library.create(chosen)
+        self.refill()
+
+    def add_dat(self) -> None:
+        """The No-Intro window, which finds the downloads rather than asking."""
+        if DatDialog(self, self.catalog).loaded:
+            self.refill()
+
+    @staticmethod
+    def why(dat, path: str) -> str:
+        """Name the mistake and the fix, rather than reporting a blank."""
+        name = os.path.basename(path)
+        if dat.problem is nointro.Problem.DB_EXPORT:
+            return (f"{name} is the DB Export, which carries its data in a "
+                    "different form this app cannot read.\n\n"
+                    "Go back to the same page and take the DAT, or the "
+                    "Parent-Clone DAT. Either one works; Parent-Clone covers "
+                    "a few hundred more unlicensed and aftermarket "
+                    "cartridges.")
+        if dat.problem is nointro.Problem.WRONG_SYSTEM:
+            return (f"{name} is a DAT, but not for a system this app handles. "
+                    "It wants Game Boy, Game Boy Color or Game Boy Advance.")
+        if dat.problem is nointro.Problem.MISSING:
+            return f"{name} is not there any more."
+        if dat.problem is nointro.Problem.NOT_A_DAT:
+            return f"{name} does not hold a DAT at all."
+        return (f"{name} could not be read. If the download was interrupted, "
+                "fetching it again is the fix.")
+
+
+class CheatDialog(tk.Toplevel):
+    """The cheat file a dump maps to, and every other one it could.
+
+    A dump gets its cheats by default, because by the time it is identified it
+    has a name the matcher was built for: `match.best()` is hopeless at
+    ZELDA.gb and good at "Legend of Zelda, The - Link's Awakening (USA,
+    Europe)". Renaming is what makes the matcher the app already has work on
+    it, and this window is where that answer can be looked at and changed.
+
+    The choice is keyed on the canonical name rather than on the dump's, and
+    is remembered in prefs exactly as it is for a ROM on the card - it is a
+    decision, and decisions do not live in an index that a rebuild discards.
+    """
+
+    def __init__(self, app, prop, rom_path: str | None) -> None:
+        super().__init__(app)
+        self.prop = prop
+        self.rom_path = rom_path
+        self.title("Cheats for this dump")
+        self.transient(app)
+        self.columnconfigure(0, weight=1)
+
+        body = ttk.Frame(self, padding=12)
+        body.grid(row=0, column=0, sticky="nsew")
+        body.columnconfigure(0, weight=1)
+
+        ttk.Label(body, text=prop.identity.name or prop.dump.name).grid(
+            row=0, column=0, sticky="w")
+        current = dumps.cheat(prop.identity, rom_path)
+        self.now = ttk.Label(body, foreground=QUIET, justify="left")
+        self.now.grid(row=1, column=0, sticky="w", pady=(2, 8))
+
+        cols = ("score", "where")
+        self.tree = ttk.Treeview(body, columns=cols, show="tree headings",
+                                 selectmode="browse", height=9)
+        self.tree.heading("#0", text="Cheat file")
+        self.tree.heading("score", text="Match")
+        self.tree.heading("where", text="From")
+        self.tree.column("#0", width=430, stretch=True)
+        self.tree.column("score", width=70, stretch=False, anchor="center")
+        self.tree.column("where", width=110, stretch=False, anchor="center")
+        self.tree.grid(row=2, column=0, sticky="nsew")
+        self.tree.tag_configure("on", foreground=READY)
+
+        row = ttk.Frame(body)
+        row.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        ttk.Button(row, text="Close", command=self.destroy).pack(side="right")
+        ttk.Button(row, text="Use this one", width=13,
+                   command=self.use).pack(side="right", padx=(0, 4))
+        # Clearing the pin is not the same as picking nothing: it puts the
+        # dump back under whatever the matcher says today, which is the right
+        # answer once a cheat file with a better name turns up in an update.
+        self.clear_btn = ttk.Button(row, text="Use the match", width=13,
+                                    command=self.unpin)
+        self.clear_btn.pack(side="right", padx=(0, 4))
+
+        self.fill(current)
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.grab_set()
+        self.wait_window(self)
+
+    def fill(self, current) -> None:
+        self.tree.delete(*self.tree.get_children())
+        pinned = bool(self.rom_path) and bool(prefs.get_source(self.rom_path))
+        self.now.config(
+            text=("Using " + current.name + ("  (pinned by you)" if pinned else
+                  "  (from its clone parent)" if current.via_parent else
+                  "  (matched)")) if current else
+                 (current.problem or "No cheat file matches this one."),
+            foreground=QUIET if current else LESSER)
+        self.clear_btn.state(["!disabled"] if pinned else ["disabled"])
+        try:
+            found = match.rank(self.prop.identity.name or "",
+                               self.prop.identity.system or "", limit=12)
+        except cheatlib.MissingDatabase:
+            found = []
+        for cand in found:
+            self.tree.insert(
+                "", "end", iid=cand.path, text=cand.name,
+                values=(f"{cand.score:.2f}", "yours" if cand.local
+                        else "libretro"),
+                tags=("on",) if current and cand.path == current.path else ())
+        if current and current.path in self.tree.get_children():
+            self.tree.selection_set(current.path)
+
+    def use(self) -> None:
+        sel = self.tree.selection()
+        if sel and self.rom_path:
+            dumps.set_cheat(self.rom_path, sel[0])
+            self.fill(dumps.cheat(self.prop.identity, self.rom_path))
+
+    def unpin(self) -> None:
+        if self.rom_path:
+            dumps.set_cheat(self.rom_path, None)
+            self.fill(dumps.cheat(self.prop.identity, self.rom_path))
 
 
 class DatDialog(tk.Toplevel):

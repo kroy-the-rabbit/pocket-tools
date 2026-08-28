@@ -100,6 +100,32 @@ class Dialog(unittest.TestCase):
         self.dumps, self.library, self.nointro, self.ui = (
             dumps, library, nointro, ui)
 
+        # Every modal this window can raise, answered here. Patched on the ui
+        # module because that is what the window calls through, and a test
+        # that reaches a real one puts a dialog on the developer's desktop and
+        # waits for a human to click it.
+        self.asked: list = []
+        self.warned: list = []
+        asked, warned = self.asked, self.warned
+        self.addCleanup(setattr, ui, "messagebox", ui.messagebox)
+
+        class Answered:
+            @staticmethod
+            def askyesno(*a, **k):
+                asked.append(a)
+                return True
+
+            @staticmethod
+            def showwarning(*a, **k):
+                warned.append(a)
+
+            showerror = showwarning
+
+            @staticmethod
+            def showinfo(*a, **k):
+                pass
+        ui.messagebox = Answered
+
         self.card = os.path.join(self.tmp.name, "card")
         self.lib = os.path.join(self.tmp.name, "library")
         os.makedirs(dumps.dump_dir(self.card))
@@ -140,11 +166,16 @@ class Dialog(unittest.TestCase):
     def state(self, dlg, path: str) -> str:
         return dlg.tree.set(path, "state")
 
+    def tick(self, dlg, path: str) -> None:
+        """What a click in the first column does."""
+        if path not in dlg.ticked():
+            dlg.flip(path)
+
     # ------------------------------------------------------------- verdicts --
     def test_a_dump_the_dat_knows_is_offered_under_its_real_name(self):
         p = self.put("ZELDA.gb", self.zelda)
         dlg = self.build()
-        self.assertEqual(self.state(dlg, p), "ready to file")
+        self.assertEqual(self.state(dlg, p), "ready")
         self.assertEqual(
             dlg.tree.set(p, "name"),
             "Legend of Zelda, The - Link's Awakening (USA, Europe).gb")
@@ -157,9 +188,10 @@ class Dialog(unittest.TestCase):
         self.assertIn("can tell those apart", dlg.detail.cget("text"))
 
     def test_an_unidentified_dump_offers_nothing_automatic(self):
-        self.put("UNKNOWN.gb", self.mystery)
+        p = self.put("UNKNOWN.gb", self.mystery)
         dlg = self.build()
-        self.assertIn("disabled", dlg.file_btn.state())
+        self.tick(dlg, p)
+        self.assertIn("disabled", dlg.add_btn.state())
 
     def test_the_file_the_core_leaves_behind_is_not_a_dump(self):
         self.put("ZELDA.gb", self.zelda)
@@ -167,44 +199,49 @@ class Dialog(unittest.TestCase):
         dlg = self.build()
         self.assertEqual(len(dlg.tree.get_children()), 1)
 
-    def test_the_window_opens_on_the_question_it_was_opened_to_ask(self):
-        self.put("AAA_UNKNOWN.gb", self.mystery)   # sorts first, needs nothing
-        p = self.put("ZELDA.gb", self.zelda)
+    def test_nothing_is_ticked_until_somebody_ticks_it(self):
+        """The app never decides on its own what to do with a dump."""
+        self.put("ZELDA.gb", self.zelda)
         dlg = self.build()
-        self.assertEqual(dlg.tree.selection()[0], p)
+        self.assertEqual(dlg.ticked(), set())
+        self.assertIn("disabled", dlg.add_btn.state())
+
+    def test_all_ticks_only_what_a_button_could_act_on(self):
+        self.put("ZELDA.gb", self.zelda)
+        u = self.put("UNKNOWN.gb", self.mystery)
+        dlg = self.build()
+        dlg.tick_all(True)
+        self.assertNotIn(u, dlg.ticked())
+        dlg.tick_all(False)
+        self.assertEqual(dlg.ticked(), set())
 
     # -------------------------------------------------------------- filing --
     def test_filing_writes_both_names_and_leaves_the_card_alone(self):
         p = self.put("ZELDA.gb", self.zelda)
         dlg = self.build()
-        dlg.tree.selection_set(p)
-        opened = []
-        self.ui.RemoveDialog = lambda parent, filing: (
-            opened.append(filing), Stub())[1]
-        dlg.file_one()
+        self.tick(dlg, p)
+        dlg.add_ticked()
         self.assertEqual(
             os.listdir(self.library.roms_dir(self.lib)),
             ["Legend of Zelda, The - Link's Awakening (USA, Europe).gb"])
         self.assertEqual(os.listdir(self.library.dumps_dir(self.lib)),
                          ["ZELDA.gb"])
-        # commit() never touches the card. Only RemoveDialog does, and only
-        # once somebody has answered it.
+        # Adding never touches the card. Clear from card is a separate press,
+        # and the file is still there until it is made.
         self.assertTrue(os.path.exists(p))
-        self.assertTrue(opened and opened[0].verified)
 
     def test_a_filed_dump_is_not_asked_about_twice(self):
         p = self.put("ZELDA.gb", self.zelda)
         dlg = self.build()
-        dlg.tree.selection_set(p)
-        self.ui.RemoveDialog = lambda parent, filing: Stub()
-        dlg.file_one()
-        self.assertEqual(self.state(dlg, p), "already filed")
-        self.assertIn("disabled", dlg.file_btn.state())
+        self.tick(dlg, p)
+        dlg.add_ticked()
+        self.assertIn(self.state(dlg, p), ("in the library",
+                                           "card copy spare"))
 
     def test_turning_a_dump_down_is_remembered(self):
         p = self.put("ZELDA.gb", self.zelda)
         dlg = self.build()
-        dlg.tree.selection_set(p)
+        self.tick(dlg, p)
         dlg.turn_down()
         self.assertEqual(self.state(dlg, p), "turned down")
         self.assertTrue(self.dumps.rejected(
@@ -233,11 +270,12 @@ class Dialog(unittest.TestCase):
         dlg = self.build()
         dlg.tree.selection_set(p)
 
-        class Removed(Stub):
-            removed = True
-        self.ui.RemoveDialog = lambda parent, filing: Removed()
-        dlg.file_one()
+        self.tick(dlg, p)
+        dlg.add_ticked()
+        dlg.tick_all(True)          # now the card copy is the spare one
+        dlg.clear_ticked()
         self.assertEqual(dlg.tree.get_children(), ())
+        self.assertFalse(os.path.exists(p))
 
     # ----------------------------------------------------------- collisions --
     def collide(self):
@@ -249,15 +287,14 @@ class Dialog(unittest.TestCase):
             f.write(b"\x00" * len(self.zelda))
         p = self.put("ZELDA.gb", self.zelda)
         dlg = self.build()
-        dlg.tree.selection_set(p)
+        self.tick(dlg, p)
         return dlg, p, taken
 
     def answer(self, dlg, choice):
         self.ui.CollisionDialog = type(
-            "Stub", (), {"__init__": lambda s, parent, prop: None,
-                         "result": choice})
-        self.ui.RemoveDialog = lambda parent, filing: Stub()
-        dlg.file_one()
+            "Ask", (), {"__init__": lambda s, parent, prop: None,
+                        "result": choice})
+        dlg.add_ticked()
 
     def test_a_taken_name_is_a_question_and_not_a_silent_overwrite(self):
         dlg, p, _ = self.collide()
