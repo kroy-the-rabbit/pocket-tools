@@ -41,6 +41,12 @@ import writer
 
 TICK, UNTICK = "☑", "☐"
 CARTS = "carts"        # iid of the Cartridges row in the systems pane
+# Filed cartridge dumps. Its own row rather than a heading under Cartridges,
+# because the two are opposites and sharing a category would say they are
+# alike: a played cartridge has no identity and the app takes your word for
+# what it is, while a dump was hashed and identified and nothing about it is
+# taken on trust.
+SHELF = "shelf"        # iid of the Cartridge dumps row
 GROUP = "sys:"         # iid prefix of a system heading in the cartridge pane
 
 # The colours, in one place, because they mean the same thing in every window
@@ -212,6 +218,9 @@ class App(ttk.Frame):
         # core's Load Cheats browser looks and the one directory a cartridge
         # user has to find by hand. Greyed rather than hidden while nothing is
         # selected, since the answer changes with every click in the pane.
+        self.copy_btn = ttk.Button(cartbar, text="Copy to card", width=13,
+                                   command=self.copy_to_card, state="disabled")
+        self.copy_btn.pack(side="left", padx=(4, 0))
         self.cart_open = open_button_for(cartbar, self.cart_dir)
         if self.cart_open is not None:
             self.cart_open.pack(side="left", padx=(4, 0))
@@ -420,6 +429,8 @@ class App(ttk.Frame):
         # Cartridges are not files on the card, so they are listed separately.
         self.systems.insert("", "end", iid=CARTS, text="Cartridges",
                             values=(len(carts.all()),))
+        self.systems.insert("", "end", iid=SHELF, text="Cartridge dumps",
+                            values=(len(self.shelf()),))
         self.status.config(text="reading the card...")
         self.start_prefetch()
 
@@ -732,6 +743,14 @@ class App(ttk.Frame):
         self.add_btn.state(["!disabled"] if sel[0] == CARTS else ["disabled"])
         self.del_btn.state(["disabled"])
         self.move_btn.state(["disabled"])
+        self.copy_btn.state(["disabled"])
+        if sel[0] == SHELF:
+            # Same reason as the cartridges branch below: this fills the game
+            # pane synchronously, so a platform read still in flight would
+            # repaint it afterwards while self.games still held the dumps.
+            self.platform = None
+            self.show_shelf()
+            return
         if sel[0] == CARTS:
             # Retire any platform read still in flight. show_carts() fills the
             # game pane synchronously, so a result arriving after it would
@@ -962,6 +981,125 @@ class App(ttk.Frame):
             text=f"{len(self.games)} cartridges" if self.games else
                  "no cartridges listed yet, press Add", foreground="#000")
 
+    def shelf(self) -> list:
+        """Every dump in the library, as the card ROM each is destined to be.
+
+        A `card.Game` and not a type of its own, because that is exactly what
+        one of these becomes the moment it is copied across: same name, same
+        platform, same place the Pocket looks for its cheat file. Presenting it
+        as the thing it will be means `model.load()`, the matcher and Send to
+        Pocket all work on it with no special case anywhere, and Copy to card
+        is the one step that makes it true.
+
+        The path is where the ROM would go whether or not it is there yet.
+        """
+        root = library.path()
+        if not root or self.card is None:
+            return []
+        out = []
+        for row in library.load(root):
+            if not row.rom or not row.system:
+                continue        # unidentified: there is no name to file under
+            out.append(card_mod.Game(
+                os.path.join(self.card.root, "Assets", row.system, "common",
+                             row.rom), row.system))
+        return sorted(out, key=lambda g: (g.platform, g.name.lower()))
+
+    def show_shelf(self) -> None:
+        """The filed dumps, grouped by system, and whether each is on the card.
+
+        Filing a dump used to be the end of the road: the copy lived in a
+        directory on the computer and nothing in this window could see it, so
+        the cheats it had been carefully matched to could never be attached to
+        anything. This is the way back.
+        """
+        self.games = self.shelf()
+        # Its own tag rather than borrowing the heading one: a dump that is
+        # only in the library is dimmer because there is nothing on the card
+        # for its cheats to sit beside yet, which is a different thing from a
+        # row that is not a game at all.
+        self.gamelist.tag_configure("offcard", foreground=IDLE)
+        self.gamelist.delete(*self.gamelist.get_children())
+        self.cheats.delete(*self.cheats.get_children())
+        self.view = None
+        for b in (self.save_btn, self.source_btn, self.del_btn, self.move_btn):
+            b.state(["disabled"])
+        self.source_label.config(text="")
+        retune_open(self.cart_open, None)
+
+        by_platform: dict[str, list[int]] = {}
+        for i, g in enumerate(self.games):
+            by_platform.setdefault(g.platform, []).append(i)
+        here = 0
+        for pid, positions in by_platform.items():
+            gid = GROUP + pid
+            self.gamelist.insert(
+                "", "end", iid=gid, open=True,
+                text=f"{self.platform_name(pid)}  ({len(positions)})",
+                tags=("group",))
+            for i in positions:
+                g = self.games[i]
+                on_card = os.path.exists(g.path)
+                here += on_card
+                n = len(model.writer.load_installed(g.cht_path, g.platform))
+                self.gamelist.insert(
+                    gid, "end", iid=str(i), text=g.name,
+                    values=(n if n else "",),
+                    tags=() if on_card else ("offcard",))
+        if not self.games:
+            self.status.config(
+                text="no dumps filed yet: press Cartridge dumps... on the card "
+                     "line to read what is on the card", foreground="#000")
+        else:
+            self.status.config(
+                text=f"{len(self.games)} filed, {here} already on the card. "
+                     "Pick one and press Copy to card to put it there.",
+                foreground="#000")
+
+    def copy_to_card(self) -> None:
+        """Put a filed dump back on the card, under the name it earned.
+
+        Written beside the ROMs the app already reads, so the Pocket can load
+        it and so the cheats matched to it have something to be attached to.
+        Through a temporary file and a replace, the way every other write here
+        goes: a half-copied ROM that the Pocket would try to boot is worse than
+        no ROM at all.
+        """
+        game = self.selected_game()
+        root = library.path()
+        if game is None or not root or self.card is None:
+            return
+        src = os.path.join(library.roms_dir(root), os.path.basename(game.path))
+        if not os.path.exists(src):
+            messagebox.showerror(
+                "Cartridge dumps",
+                f"{os.path.basename(src)} is not in the library any more.")
+            return
+        if os.path.exists(game.path):
+            messagebox.showinfo("Cartridge dumps",
+                                f"{game.name} is already on the card.")
+            return
+        tmp = game.path + ".part"
+        try:
+            os.makedirs(os.path.dirname(game.path), exist_ok=True)
+            shutil.copyfile(src, tmp)
+            os.replace(tmp, game.path)
+        except OSError as e:
+            for leftover in (tmp,):
+                try:
+                    os.remove(leftover)
+                except OSError:
+                    pass
+            messagebox.showerror("Cartridge dumps",
+                                 f"could not copy it to the card:\n\n{e}")
+            return
+        self.status.config(text=f"{game.name} copied to the card. Its cheats "
+                                "can be sent now.", foreground="#060")
+        # The system it landed in has one more ROM than it did, and the count
+        # in the pane would otherwise keep saying otherwise until a rescan.
+        self.ready.pop(game.platform, None)
+        self.refresh_shelf()
+
     def add_cart(self) -> None:
         """Name it and say which system it is for.
 
@@ -1108,6 +1246,16 @@ class App(ttk.Frame):
             return
         if self.card is not None:
             DumpsDialog(self, self.card.root, self.catalog, found or [])
+            self.refresh_shelf()
+
+    def refresh_shelf(self) -> None:
+        """The filed-dump count, after anything that could have changed it."""
+        if not self.systems.exists(SHELF):
+            return
+        self.systems.item(SHELF, values=(len(self.shelf()),))
+        sel = self.systems.selection()
+        if sel and sel[0] == SHELF:
+            self.show_shelf()
 
     def cart_dir(self) -> str | None:
         """Where the selected cartridge's cheat file goes on the card."""
@@ -1140,6 +1288,10 @@ class App(ttk.Frame):
         is_cart = isinstance(game, carts.Cartridge)
         self.del_btn.state(["!disabled"] if is_cart else ["disabled"])
         self.move_btn.state(["!disabled"] if is_cart else ["disabled"])
+        sel = self.systems.selection()
+        self.copy_btn.state(
+            ["!disabled"] if sel and sel[0] == SHELF and not is_cart
+            and not os.path.exists(game.path) else ["disabled"])
         self.status.config(text="loading...", foreground="#000")
 
         def load():

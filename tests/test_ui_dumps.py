@@ -374,6 +374,57 @@ class Dialog(unittest.TestCase):
         note = dlg.dat_label.cget("text")
         self.assertIn("Game Boy", note)
 
+    # ---------------------------------------------------------- the shelf --
+    def shelved(self):
+        """A library holding one filed dump, and a card without it."""
+        rom = "Tetris (World) (Rev 1).gb"
+        with open(os.path.join(self.library.roms_dir(self.lib), rom),
+                  "wb") as f:
+            f.write(self.tetris)
+        idx = self.library.load(self.lib)
+        idx.put(self.library.Row(sha1="a" * 40, size=len(self.tetris),
+                                 crc32="deadbeef", filed="2026-08-27",
+                                 rom=rom, dump="TETRIS.gb", system="gb"))
+        self.library.save(self.lib, idx)
+        app = self.ui.App.__new__(self.ui.App)
+        app.card = type("C", (), {"root": self.card})()
+        return app, rom
+
+    def test_a_filed_dump_is_offered_as_the_card_rom_it_will_become(self):
+        """`model.load` and the matcher then need no special case at all."""
+        app, rom = self.shelved()
+        shelf = self.ui.App.shelf(app)
+        self.assertEqual([g.name for g in shelf], ["Tetris (World) (Rev 1)"])
+        self.assertEqual(shelf[0].platform, "gb")
+        self.assertEqual(shelf[0].path,
+                         os.path.join(self.card, "Assets", "gb", "common", rom))
+        self.assertEqual(shelf[0].cht_path, shelf[0].path + ".cht")
+
+    def test_copying_a_dump_back_puts_the_bytes_where_the_pocket_looks(self):
+        app, rom = self.shelved()
+        g = self.ui.App.shelf(app)[0]
+        self.assertFalse(os.path.exists(g.path))
+        app.games, app.ready = [g], {}
+        app.selected_game = lambda: g
+        app.status = type("S", (), {"config": lambda s, **k: None})()
+        app.refresh_shelf = lambda: None
+        self.ui.App.copy_to_card(app)
+        self.assertTrue(os.path.exists(g.path))
+        with open(g.path, "rb") as f:
+            self.assertEqual(f.read(), self.tetris)
+        self.assertFalse([n for n in os.listdir(os.path.dirname(g.path))
+                          if n.endswith(".part")])
+
+    def test_a_dump_with_no_name_is_not_offered_to_the_card(self):
+        """Unidentified means there is no name to file it under."""
+        idx = self.library.load(self.lib)
+        idx.put(self.library.Row(sha1="b" * 40, size=1, crc32="0",
+                                 filed="2026-08-27", dump="MYSTERY.gb"))
+        self.library.save(self.lib, idx)
+        app = self.ui.App.__new__(self.ui.App)
+        app.card = type("C", (), {"root": self.card})()
+        self.assertEqual(self.ui.App.shelf(app), [])
+
     # ----------------------------------------------------------- the DATs --
     def dat_dir(self) -> str:
         """A stand-in downloads directory holding what a browser would leave."""

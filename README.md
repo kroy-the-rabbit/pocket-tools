@@ -269,6 +269,21 @@ the replacement exists and has been compared byte for byte, and the comparison
 is made again immediately before the delete, so a card swapped in between
 refuses instead of losing a file.
 
+### Getting a dump back onto the card
+
+Filing a dump copies it **off** the card, which left it somewhere the rest of
+the app could not see: the cheats it had just been matched to had nothing to be
+attached to. **Cartridge dumps** in the systems pane is the way back. It is its
+own category rather than a heading under **Cartridges**, because the two are
+opposites and filing them together would say they were alike.
+
+It lists everything in your library, grouped by system, dimming the ones that
+are not on the card. Pick one, press **Copy to card**, and the ROM is written
+where the Pocket looks for it — under its real No-Intro name, which is what
+makes the cheat matcher find the right file without being asked. After that it
+is an ordinary ROM: it shows up under its own system, and **Send to Pocket**
+writes its cheats beside it like any other.
+
 Game Boy, Game Boy Color and Game Boy Advance all dump. This is a different
 thing from the cartridge *play* support above, which is Game Boy and Game Boy
 Color only.
