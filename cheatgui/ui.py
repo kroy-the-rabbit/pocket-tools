@@ -140,6 +140,7 @@ class App(ttk.Frame):
         # from the dumps window and lives until the window is closed.
         self.catalog = nointro.Catalog()
         self.ready: dict[str, list[int]] = {}   # platform id -> cheat counts
+        self.shelf_sizes: dict[str, int] = {}  # filed dump name -> its size
         self.wanted: str | None = None          # the system to read next
         self.working: Working | None = None     # the modal, while it is up
         self._working_after = None
@@ -1005,6 +1006,30 @@ class App(ttk.Frame):
                              row.rom), row.system))
         return sorted(out, key=lambda g: (g.platform, g.name.lower()))
 
+    def on_card(self, game) -> str:
+        """"same", "other" or "no": is this dump already sitting on the card?
+
+        Compared by size and not by name alone. A ROM already on the card
+        under the same canonical name is usually the same dump copied across
+        earlier, and treating it as such is right - but it is not guaranteed,
+        and the old check could not tell the two apart. Getting that wrong is
+        not cosmetic: it disables Copy to card, so the dump can never be put
+        there, and the cheats matched to it are then attached to somebody
+        else's file.
+
+        Size rather than a hash because this runs for every row every time the
+        pane is drawn, and hashing a shelf of Game Boy Advance ROMs off a card
+        over USB would cost the same half minute the dumps window already has
+        to warn people about. Size catches a different game; the byte
+        comparison that matters guards the delete, not this.
+        """
+        try:
+            there = os.path.getsize(game.path)
+        except OSError:
+            return "no"
+        want = self.shelf_sizes.get(game.name)
+        return "same" if want is None or want == there else "other"
+
     def show_shelf(self) -> None:
         """The filed dumps, grouped by system, and whether each is on the card.
 
@@ -1014,11 +1039,18 @@ class App(ttk.Frame):
         anything. This is the way back.
         """
         self.games = self.shelf()
+        root = library.path()
+        self.shelf_sizes = {}
+        if root:
+            for r in library.load(root):
+                if r.rom:
+                    self.shelf_sizes[os.path.splitext(r.rom)[0]] = r.size
         # Its own tag rather than borrowing the heading one: a dump that is
         # only in the library is dimmer because there is nothing on the card
         # for its cheats to sit beside yet, which is a different thing from a
         # row that is not a game at all.
         self.gamelist.tag_configure("offcard", foreground=IDLE)
+        self.gamelist.tag_configure("clash", foreground=LESSER)
         self.gamelist.delete(*self.gamelist.get_children())
         self.cheats.delete(*self.cheats.get_children())
         self.view = None
@@ -1030,7 +1062,7 @@ class App(ttk.Frame):
         by_platform: dict[str, list[int]] = {}
         for i, g in enumerate(self.games):
             by_platform.setdefault(g.platform, []).append(i)
-        here = 0
+        here = clash = 0
         for pid, positions in by_platform.items():
             gid = GROUP + pid
             self.gamelist.insert(
@@ -1039,22 +1071,31 @@ class App(ttk.Frame):
                 tags=("group",))
             for i in positions:
                 g = self.games[i]
-                on_card = os.path.exists(g.path)
-                here += on_card
+                state = self.on_card(g)
+                here += state == "same"
+                clash += state == "other"
                 n = len(model.writer.load_installed(g.cht_path, g.platform))
                 self.gamelist.insert(
-                    gid, "end", iid=str(i), text=g.name,
+                    gid, "end", iid=str(i),
+                    text=g.name + ("   (a different file of that name is on "
+                                   "the card)" if state == "other" else ""),
                     values=(n if n else "",),
-                    tags=() if on_card else ("offcard",))
+                    tags=("clash",) if state == "other"
+                    else () if state == "same" else ("offcard",))
         if not self.games:
             self.status.config(
                 text="no dumps filed yet: press Cartridge dumps... on the card "
                      "line to read what is on the card", foreground="#000")
         else:
-            self.status.config(
-                text=f"{len(self.games)} filed, {here} already on the card. "
-                     "Pick one and press Copy to card to put it there.",
-                foreground="#000")
+            # Kept short deliberately: this is a one-line label in a fixed
+            # area, and the first version of it ran off the end of the window
+            # exactly where it explained what the dimming meant.
+            note = (f"{len(self.games)} filed, {here} on the card. Dimmed "
+                    "ones are not: select one, then Copy to card.")
+            if clash:
+                note += f"  {clash} clash by name; copying asks."
+            self.status.config(text=note,
+                               foreground=LESSER if clash else "#000")
 
     def copy_to_card(self) -> None:
         """Put a filed dump back on the card, under the name it earned.
@@ -1075,9 +1116,17 @@ class App(ttk.Frame):
                 "Cartridge dumps",
                 f"{os.path.basename(src)} is not in the library any more.")
             return
-        if os.path.exists(game.path):
+        state = self.on_card(game)
+        if state == "same":
             messagebox.showinfo("Cartridge dumps",
                                 f"{game.name} is already on the card.")
+            return
+        if state == "other" and not messagebox.askyesno(
+                "Copy to card",
+                f"A different file called {os.path.basename(game.path)} is "
+                "already on the card.\n\nReplace it with your dump? The one "
+                "on the card is overwritten and is not backed up anywhere; "
+                "your dump stays in the library either way.", parent=self):
             return
         tmp = game.path + ".part"
         try:
@@ -1291,7 +1340,7 @@ class App(ttk.Frame):
         sel = self.systems.selection()
         self.copy_btn.state(
             ["!disabled"] if sel and sel[0] == SHELF and not is_cart
-            and not os.path.exists(game.path) else ["disabled"])
+            and self.on_card(game) != "same" else ["disabled"])
         self.status.config(text="loading...", foreground="#000")
 
         def load():

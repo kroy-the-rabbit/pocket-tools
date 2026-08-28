@@ -277,9 +277,9 @@ attached to. **Cartridge dumps** in the systems pane is the way back. It is its
 own category rather than a heading under **Cartridges**, because the two are
 opposites and filing them together would say they were alike.
 
-It lists everything in your library, grouped by system, dimming the ones that
-are not on the card. Pick one, press **Copy to card**, and the ROM is written
-where the Pocket looks for it — under its real No-Intro name, which is what
+It lists everything in your library, grouped by system. **A dimmed row is one
+that is not on the card**; a normal one is already there. Select a dimmed row
+and press **Copy to card**, and the ROM is written where the Pocket looks for it — under its real No-Intro name, which is what
 makes the cheat matcher find the right file without being asked. After that it
 is an ordinary ROM: it shows up under its own system, and **Send to Pocket**
 writes its cheats beside it like any other.

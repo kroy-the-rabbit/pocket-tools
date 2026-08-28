@@ -425,6 +425,26 @@ class Dialog(unittest.TestCase):
         app.card = type("C", (), {"root": self.card})()
         self.assertEqual(self.ui.App.shelf(app), [])
 
+    def test_a_rom_of_the_same_name_but_different_size_is_not_the_dump(self):
+        """The old check was the filename, and could not tell these apart.
+
+        Getting it wrong disables Copy to card, so the dump could never be put
+        on the card, and the cheats matched to it would be attached to a file
+        that is not it.
+        """
+        app, rom = self.shelved()
+        g = self.ui.App.shelf(app)[0]
+        app.shelf_sizes = {g.name: len(self.tetris)}
+        os.makedirs(os.path.dirname(g.path), exist_ok=True)
+        with open(g.path, "wb") as f:
+            f.write(b"\x00" * (len(self.tetris) + 1))
+        self.assertEqual(self.ui.App.on_card(app, g), "other")
+        with open(g.path, "wb") as f:
+            f.write(self.tetris)
+        self.assertEqual(self.ui.App.on_card(app, g), "same")
+        os.remove(g.path)
+        self.assertEqual(self.ui.App.on_card(app, g), "no")
+
     # ----------------------------------------------------------- the DATs --
     def dat_dir(self) -> str:
         """A stand-in downloads directory holding what a browser would leave."""
