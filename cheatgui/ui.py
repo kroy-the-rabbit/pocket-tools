@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 import textwrap
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 import card as card_mod
 import carts
@@ -23,8 +23,12 @@ import cheatfile
 import cheatlib
 import core as core_mod
 import db
+import dumps
+import library
 import meter
 import model
+import nointro
+import reveal
 import timing
 import version
 import work
@@ -33,6 +37,65 @@ import writer
 TICK, UNTICK = "☑", "☐"
 CARTS = "carts"        # iid of the Cartridges row in the systems pane
 GROUP = "sys:"         # iid prefix of a system heading in the cartridge pane
+
+# The colours, in one place, because they mean the same thing in every window
+# and were once picked per dialog until two of them disagreed about whether a
+# broken boot ROM was good news. Green is never a failure: it is for a state
+# worth acting on that is not one.
+FAULT = "#a00"         # broken, and nothing works until it is fixed
+LESSER = "#b35c00"     # wrong, or in the way, but not fatal
+READY = "#0a6"         # worth acting on, and not broken
+IDLE = "#999"          # nothing to do here
+QUIET = "#666"         # ordinary prose
+
+
+# ------------------------------------------------- opening a directory --
+def holding(path: str | None) -> str | None:
+    """The directory the app offers to open for a path it names.
+
+    Always the containing directory and never the file itself. Revealing a
+    file means a different argument on every platform for no useful
+    difference, and the answer to "did it land" is the directory listing --
+    which is also what somebody wants open when they go looking for the other
+    files beside it.
+    """
+    return os.path.dirname(os.path.abspath(path)) if path else None
+
+
+def open_button(parent, path: str | None, *, text="Open", width=7):
+    """A button that opens one fixed directory, or None if it would not work.
+
+    None rather than a disabled button, because a directory that is not there
+    and a machine with no file manager both stay that way for as long as this
+    window is up: a sandboxed build should quietly show nothing rather than
+    offer a button that fails. The path is still on screen either way, and
+    Copy path is what covers a build that cannot open one.
+    """
+    if not reveal.openable(path):
+        return None
+    return ttk.Button(parent, text=text, width=width,
+                      command=lambda: reveal.directory(path or ""))
+
+
+def open_button_for(parent, get_path, *, text="Open", width=7):
+    """The same button where the directory follows a selection.
+
+    Here the button is drawn whenever the machine has a file manager at all
+    and `retune_open` greys it for a row whose directory is not there yet. A
+    button that vanished and came back as the selection moved down a table
+    would be worse than one that goes grey, and unlike the fixed case the
+    answer changes while the window is open.
+    """
+    if not reveal.available():
+        return None
+    return ttk.Button(parent, text=text, width=width,
+                      command=lambda: reveal.directory(get_path() or ""))
+
+
+def retune_open(btn, path: str | None) -> None:
+    """Grey a selection-following Open button when there is nothing to open."""
+    if btn is not None:
+        btn.state(["!disabled"] if reveal.openable(path) else ["disabled"])
 
 
 class App(ttk.Frame):
@@ -55,6 +118,16 @@ class App(ttk.Frame):
         # The core check and the core install: network bound, and neither may
         # queue behind the database fetch or the card read.
         self.corejob = work.Job(master)
+        # Hashing the cartridge dumps, and filing one. Seventeen dumps with a
+        # 16 MB one among them is seconds of reading, and a run of it on the Tk
+        # thread would freeze the window in a way that is indistinguishable
+        # from a crash. Its own runner so it cannot queue behind the database.
+        self.dumpjob = work.Job(master)
+        # The No-Intro data, for as long as the app is up. There is nowhere to
+        # remember it: a DAT is the user's own download, the app never copies
+        # one, and prefs holds decisions rather than files. So it is loaded
+        # from the dumps window and lives until the window is closed.
+        self.catalog = nointro.Catalog()
         self.ready: dict[str, list[int]] = {}   # platform id -> cheat counts
         self.wanted: str | None = None          # the system to read next
         self.working: Working | None = None     # the modal, while it is up
@@ -88,11 +161,23 @@ class App(ttk.Frame):
         ttk.Label(top, text="Pocket SD card:").grid(row=0, column=0, padx=(0, 6))
         self.card_label = ttk.Label(top, text="scanning...", foreground="#666")
         self.card_label.grid(row=0, column=1, sticky="w")
+        # On the card line rather than the core line, because what it acts on
+        # is the card: the dumper writes into /Assets and this reads what it
+        # left. Next to Eject for the same reason, and before it, since going
+        # through the dumps is what somebody does before pulling the card.
+        self.dumps_btn = ttk.Button(top, text="Cartridge dumps...", width=18,
+                                    command=self.show_dumps, state="disabled")
+        self.dumps_btn.grid(row=0, column=2, padx=(0, 4))
+        self.card_open = open_button_for(
+            top, lambda: self.card.root if self.card else None)
+        if self.card_open is not None:
+            self.card_open.grid(row=0, column=3, padx=(0, 4))
+            retune_open(self.card_open, None)   # no card until one is found
         self.rescan_btn = ttk.Button(top, text="Rescan", command=self.rescan)
-        self.rescan_btn.grid(row=0, column=2)
+        self.rescan_btn.grid(row=0, column=4)
         self.eject_btn = ttk.Button(top, text="Eject", width=7,
                                     command=self.eject, state="disabled")
-        self.eject_btn.grid(row=0, column=3, padx=(4, 0))
+        self.eject_btn.grid(row=0, column=5, padx=(4, 0))
 
         self.systems = self._tree(1, 0, ("count",), {"#0": "System", "count": "ROMs"},
                                   {"#0": 130, "count": 50})
@@ -118,6 +203,14 @@ class App(ttk.Frame):
         self.move_btn = ttk.Button(cartbar, text="Move to...", width=11,
                                    command=self.move_cart, state="disabled")
         self.move_btn.pack(side="left")
+        # Assets/<system>/common/Cartridges/ on the card, which is where the
+        # core's Load Cheats browser looks and the one directory a cartridge
+        # user has to find by hand. Greyed rather than hidden while nothing is
+        # selected, since the answer changes with every click in the pane.
+        self.cart_open = open_button_for(cartbar, self.cart_dir)
+        if self.cart_open is not None:
+            self.cart_open.pack(side="left", padx=(4, 0))
+            retune_open(self.cart_open, None)
 
         right = ttk.Frame(self)
         right.grid(row=1, column=2, sticky="nsew", padx=(8, 0))
@@ -220,6 +313,14 @@ class App(ttk.Frame):
         self.db_btn = ttk.Button(bar, text="Update", width=8,
                                  command=self.update_db)
         self.db_btn.grid(row=0, column=3, padx=(6, 0))
+        # The database is a cache in a directory nobody would guess at, and
+        # the one question anybody asks about it -- did the update actually
+        # land -- is answered by looking in it. Selection-following rather
+        # than fixed because the directory does not exist until the first
+        # fetch makes it, and that happens with this window open.
+        self.db_open = open_button_for(bar, db.store)
+        if self.db_open is not None:
+            self.db_open.grid(row=0, column=4, padx=(4, 0))
         # Next to the database version, since the two things a bug report
         # needs are which build this is and which cheat files it was reading.
         ttk.Label(bar, text=version.label(), foreground="#888").grid(
@@ -264,6 +365,8 @@ class App(ttk.Frame):
         self.survey = None
         self.refresh_core_label()
         self.eject_btn.state(["disabled"])
+        self.dumps_btn.state(["disabled"])
+        retune_open(self.card_open, None)
         self.card_label.config(text="scanning...", foreground="#666")
         self.status.config(text="reading the card", foreground="#000")
         self.rescan_btn.state(["disabled"])
@@ -298,6 +401,8 @@ class App(ttk.Frame):
         self.card = cards[0]
         self.ready.clear()
         self.eject_btn.state(["!disabled"])
+        self.dumps_btn.state(["!disabled"])
+        retune_open(self.card_open, self.card.root)
         self.platforms = platforms
         extra = f"  (+{len(cards) - 1} more)" if len(cards) > 1 else ""
         self.card_label.config(text=f"{self.card.root}  [{self.card.label}]{extra}",
@@ -349,8 +454,10 @@ class App(ttk.Frame):
         self.gamelist.delete(*self.gamelist.get_children())
         self.cheats.delete(*self.cheats.get_children())
         for b in (self.save_btn, self.source_btn, self.del_btn, self.add_btn,
-                  self.move_btn):
+                  self.move_btn, self.dumps_btn):
             b.state(["disabled"])
+        retune_open(self.card_open, None)
+        retune_open(self.cart_open, None)
         self.source_label.config(text="")
         self.meter.set(0)
         self.card_label.config(text="card unmounted, safe to remove",
@@ -386,6 +493,7 @@ class App(ttk.Frame):
         self.db_label.config(
             text=text, foreground="#a00" if local is None else
             ("#960" if stale else "#666"))
+        retune_open(self.db_open, db.store())
 
     def update_db(self) -> None:
         """Check first, then fetch only if there is something to fetch.
@@ -832,6 +940,7 @@ class App(ttk.Frame):
         self.del_btn.state(["disabled"])
         self.move_btn.state(["disabled"])
         self.source_label.config(text="")
+        retune_open(self.cart_open, None)
 
         for pid, positions in carts.grouped(self.games):
             gid = GROUP + pid
@@ -935,6 +1044,23 @@ class App(ttk.Frame):
         carts.remove(cart.name)
         self.after_cart_change()
 
+    def show_dumps(self) -> None:
+        """The cartridge dumps window, for the card that is in.
+
+        The catalog is held on the App rather than rebuilt here so that DATs
+        loaded once stay loaded for as long as the app is up. There is nowhere
+        to remember them: a DAT is the user's own download, the app never
+        copies one, and prefs keeps decisions rather than files.
+        """
+        if self.card is None:
+            return
+        DumpsDialog(self, self.card.root, self.catalog)
+
+    def cart_dir(self) -> str | None:
+        """Where the selected cartridge's cheat file goes on the card."""
+        cart = self.selected_game()
+        return cart.subdir if isinstance(cart, carts.Cartridge) else None
+
     def selected_game(self):
         """The object for the selected row, or None if there is no live one.
 
@@ -952,6 +1078,7 @@ class App(ttk.Frame):
 
     def on_game(self, _evt=None) -> None:
         game = self.selected_game()
+        retune_open(self.cart_open, self.cart_dir())
         if game is None:
             # A system heading, or nothing. Neither is something to act on.
             self.del_btn.state(["disabled"])
@@ -1582,15 +1709,16 @@ class RomsDialog(tk.Toplevel):
         self.copy_btn = ttk.Button(row, text="Copy path",
                                    command=self.copy_path)
         self.copy_btn.pack(side="right")
-        # An "Open" button goes to the left of Copy path, showing the selected
-        # row's directory in the file manager through reveal.py. It is not here
-        # yet because that module is not: it belongs beside Copy path rather
-        # than replacing it, since a sandboxed or headless build has no file
-        # manager to call and the path still has to be gettable there. When it
-        # lands it calls reveal.open_dir() on os.path.dirname of the selected
-        # path, and is offered only for a directory that already exists -
-        # Assets/<platform>/common/ may not, and looking at a directory must
-        # never be what creates it.
+        # Beside Copy path rather than replacing it: a sandboxed or headless
+        # build has no file manager to call, and the path still has to be
+        # gettable there. Greyed rather than absent, because the answer changes
+        # as the selection moves and a button that came and went would be worse
+        # than one that goes dull. Assets/<platform>/common/ may not exist for
+        # a missing boot ROM, and looking at a directory must never be what
+        # creates it - openable() is what refuses that.
+        self.open_btn = open_button_for(row, lambda: holding(self.selected()))
+        if self.open_btn is not None:
+            self.open_btn.pack(side="right", padx=(0, 4))
 
         # A selection to start with, so Copy path means something without a
         # click, and the first thing wrong rather than the first thing listed.
@@ -1637,7 +1765,8 @@ class RomsDialog(tk.Toplevel):
         """The whole path of the selected row, unbroken, under the table."""
         path = self.selected()
         self.copy_btn.state(["!disabled"] if path else ["disabled"])
-        self.note.config(foreground="#666", text=path or "")
+        retune_open(getattr(self, "open_btn", None), holding(path))
+        self.note.config(foreground=QUIET, text=path or "")
 
     def copy_path(self) -> None:
         """Put the selected path on the clipboard.
@@ -1653,6 +1782,410 @@ class RomsDialog(tk.Toplevel):
         self.clipboard_clear()
         self.clipboard_append(path)
         self.note.config(foreground="#060", text=f"copied  {path}")
+
+
+class DumpsDialog(tk.Toplevel):
+    """The cartridge dumps on a card, one decision at a time.
+
+    The dumper writes a flat pile of files named from a fixed header offset,
+    so `ZELDA.gb` is Link's Awakening and `ZELDA_DIN__AZ7E.gbc` is Oracle of
+    Seasons with four bytes of manufacturer code stuck to it. This window is
+    where those become names that mean something, and it exists because the
+    app is the only component that ever sees the bytes after they land: the
+    core cannot list a directory, so it cannot deduplicate, cannot rename, and
+    cannot recover from a mess.
+
+    Nothing here is bulk. Every dump is presented on its own with what was
+    found, what would be done and what it would be called, and nothing is
+    written until it is approved - a dump that identifies cleanly still asks.
+    The reason is the step that empties the card: the failure mode of a wrong
+    automatic answer is a dump filed under another game's name, which is
+    exactly the confusion this feature exists to remove.
+    """
+
+    # What each verdict looks like in the table, and which tag colours it.
+    STATE = {
+        dumps.Verdict.FILE:         ("ready to file", "ready"),
+        dumps.Verdict.COLLIDES:     ("name taken", "lesser"),
+        dumps.Verdict.FILED:        ("already filed", "idle"),
+        dumps.Verdict.REJECTED:     ("turned down", "idle"),
+        dumps.Verdict.MISSING:      ("filed copy is gone", "lesser"),
+        dumps.Verdict.UNIDENTIFIED: ("not in any DAT", "lesser"),
+        dumps.Verdict.UNREADABLE:   ("cannot be read", "fault"),
+    }
+
+    def __init__(self, app, card_root: str, catalog) -> None:
+        super().__init__(app)
+        self.app = app
+        self.card_root = card_root
+        self.catalog = catalog
+        self.proposals: dict[str, dumps.Proposal] = {}
+        self.title("Cartridge dumps")
+        self.transient(app)
+        self.columnconfigure(0, weight=1)
+
+        body = ttk.Frame(self, padding=12)
+        body.grid(row=0, column=0, sticky="nsew")
+        body.columnconfigure(0, weight=1)
+
+        ttk.Label(body, text="Dumps this card is holding").grid(
+            row=0, column=0, sticky="w")
+        ttk.Label(body, foreground=QUIET,
+                  text=dumps.dump_dir(card_root)).grid(
+            row=1, column=0, sticky="w", pady=(1, 8))
+
+        cols = ("state", "name")
+        self.tree = ttk.Treeview(body, columns=cols, show="tree headings",
+                                 selectmode="browse", height=10)
+        self.tree.heading("#0", text="On the card")
+        self.tree.heading("state", text="What it is")
+        self.tree.heading("name", text="What it would be called")
+        self.tree.column("#0", width=200, stretch=False)
+        self.tree.column("state", width=150, stretch=False, anchor="center")
+        self.tree.column("name", width=430, stretch=True)
+        self.tree.grid(row=2, column=0, sticky="ew")
+        self.tree.tag_configure("fault", foreground=FAULT)
+        self.tree.tag_configure("lesser", foreground=LESSER)
+        self.tree.tag_configure("ready", foreground=READY)
+        self.tree.tag_configure("idle", foreground=IDLE)
+        self.tree.bind("<<TreeviewSelect>>", self.on_pick)
+
+        # Where the library is, and the DATs it is being identified against.
+        # Both are things the user supplies and neither has a default, so both
+        # say what is missing rather than failing later with less to go on.
+        self.lib_label = ttk.Label(body, foreground=QUIET, wraplength=760,
+                                   justify="left")
+        self.lib_label.grid(row=3, column=0, sticky="w", pady=(8, 0))
+        self.dat_label = ttk.Label(body, foreground=QUIET, wraplength=760,
+                                   justify="left")
+        self.dat_label.grid(row=4, column=0, sticky="w", pady=(2, 0))
+
+        self.detail = ttk.Label(body, foreground=QUIET, wraplength=760,
+                                justify="left")
+        self.detail.grid(row=5, column=0, sticky="w", pady=(8, 0))
+
+        row = ttk.Frame(body)
+        row.grid(row=6, column=0, sticky="ew", pady=(10, 0))
+        ttk.Button(row, text="Close", command=self.destroy).pack(side="right")
+        self.file_btn = ttk.Button(row, text="File it...", width=11,
+                                   command=self.file_one, state="disabled")
+        self.file_btn.pack(side="right", padx=(0, 4))
+        self.reject_btn = ttk.Button(row, text="Turn down", width=11,
+                                     command=self.turn_down, state="disabled")
+        self.reject_btn.pack(side="right", padx=(0, 4))
+        ttk.Button(row, text="Add DAT...", width=11,
+                   command=self.add_dat).pack(side="left")
+        ttk.Button(row, text="Library...", width=11,
+                   command=self.pick_library).pack(side="left", padx=(4, 0))
+        self.lib_open = open_button_for(row, library.path)
+        if self.lib_open is not None:
+            self.lib_open.pack(side="left", padx=(4, 0))
+
+        self.refill()
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.grab_set()
+        self.wait_window(self)
+
+    # ------------------------------------------------------------- the list --
+    def refill(self) -> None:
+        """Recompute every proposal and redraw. Writes nothing.
+
+        Called again after anything that could change an answer - a DAT added,
+        a library chosen, a dump filed - because a proposal is a statement
+        about the card and the library at one moment, and all three of those
+        change it.
+        """
+        self.tree.delete(*self.tree.get_children())
+        self.proposals.clear()
+        root = library.path()
+        self.lib_label.config(
+            text=(f"Library: {root}" if root else
+                  "No library chosen yet. Press Library... to say where dumps "
+                  "and saves should be kept; nothing is filed until you do."),
+            foreground=QUIET if root else LESSER)
+        self.dat_label.config(text=dumps.dat_note(self.catalog))
+        retune_open(self.lib_open, root)
+
+        index = library.load(root) if root else None
+        for dump in dumps.scan(self.card_root):
+            identity = dumps.identify(dump, self.catalog)
+            prop = (dumps.propose(dump, identity, root, index) if root
+                    else dumps.Proposal(dump=dump, identity=identity, root="",
+                                        rom_name=identity.name))
+            self.proposals[dump.path] = prop
+            state, tag = self.STATE.get(prop.verdict, ("?", "idle"))
+            self.tree.insert("", "end", iid=dump.path, text=dump.name,
+                             values=(state, prop.rom_name or ""), tags=(tag,))
+        # Land on the first dump that needs an answer rather than the first one
+        # listed, so the window opens on the question it was opened to ask. A
+        # card whose dumps are all settled selects the first row anyway, which
+        # is what makes it say so instead of showing an empty detail.
+        rows = list(self.tree.get_children())
+        first = next((i for i in rows if self.proposals[i].actionable), None)
+        if first or rows:
+            self.tree.selection_set(first or rows[0])
+            self.tree.focus(first or rows[0])
+        self.on_pick()
+
+    def picked(self) -> dumps.Proposal | None:
+        sel = self.tree.selection()
+        return self.proposals.get(sel[0]) if sel else None
+
+    def on_pick(self, _evt=None) -> None:
+        prop = self.picked()
+        if prop is None:
+            self.detail.config(text="")
+            self.file_btn.state(["disabled"])
+            self.reject_btn.state(["disabled"])
+            return
+        self.detail.config(text=self.describe(prop))
+        can = prop.actionable and bool(library.path())
+        self.file_btn.state(["!disabled"] if can else ["disabled"])
+        self.reject_btn.state(
+            ["!disabled"] if prop.verdict is not dumps.Verdict.REJECTED
+            else ["disabled"])
+
+    def describe(self, prop: dumps.Proposal) -> str:
+        """What would happen to this dump, in the words it would happen in."""
+        d = prop.dump
+        lines = [f"{d.name}   {d.size:,} bytes   sha1 {d.sha1[:12]}..."]
+        if prop.verdict is dumps.Verdict.UNIDENTIFIED:
+            lines.append(
+                "No loaded DAT has these bytes. That is a bad dump, a revision "
+                "the DAT does not carry, or a reproduction cartridge, and "
+                "nothing here can tell those apart - so nothing is offered "
+                "automatically.")
+        elif prop.verdict is dumps.Verdict.UNREADABLE:
+            lines.append(prop.note or "Something is in the way of reading it.")
+        elif prop.verdict is dumps.Verdict.MISSING:
+            lines.append(
+                "This is in the index but its filed copy is gone. It is "
+                "reported rather than cleaned up: the app does not remove "
+                "things it did not just write.")
+        elif prop.verdict is dumps.Verdict.FILED:
+            lines.append("Already in the library, byte for byte. Nothing to do.")
+        elif prop.verdict is dumps.Verdict.REJECTED:
+            lines.append("Turned down before, so it is not asked about again.")
+        else:
+            lines.append(f"Would be filed as  {prop.rom_name}")
+            lines.append(f"and kept as        cart-dumps/{prop.dump_name}")
+            if prop.collides:
+                lines.append("That name is taken by different bytes; filing it "
+                             "will ask which one you want.")
+        # The note is the engine's one-word summary, which is worth showing
+        # only where the paragraph above has not already said it at length.
+        if prop.note and prop.verdict in (dumps.Verdict.FILE,
+                                          dumps.Verdict.COLLIDES):
+            lines.append(prop.note)
+        return "\n".join(textwrap.fill(x, 96) for x in lines)
+
+    # --------------------------------------------------------------- acting --
+    def file_one(self) -> None:
+        """File the selected dump, asking about a collision if there is one."""
+        prop = self.picked()
+        if prop is None or not prop.actionable:
+            return
+        root = library.path()
+        index = library.load(root)
+        choice = dumps.Choice.KEEP_BOTH
+        if prop.collides:
+            choice = CollisionDialog(self, prop).result
+            if choice is None:
+                return
+        filing = dumps.commit(prop, index, choice=choice)
+        if filing.discarded:
+            self.refill()
+            return
+        if not filing.ok:
+            messagebox.showerror("Cartridge dumps", filing.problem or
+                                 "nothing was filed")
+            self.refill()
+            return
+        library.save(root, index)
+        # Only now is there something to compare the card against, which is
+        # why the removal is a second question rather than part of the first.
+        if filing.verified:
+            RemoveDialog(self, filing)
+        self.refill()
+
+    def turn_down(self) -> None:
+        """Record that this dump was refused, and stop asking about it."""
+        prop = self.picked()
+        if prop is None:
+            return
+        dumps.reject(prop.dump)
+        self.refill()
+
+    def pick_library(self) -> None:
+        """Choose where dumps and saves are kept, and remember it."""
+        chosen = filedialog.askdirectory(
+            parent=self, title="Where should dumps and saves be kept?",
+            mustexist=True)
+        if not chosen:
+            return
+        library.set_path(chosen)
+        library.create(chosen)
+        self.refill()
+
+    def add_dat(self) -> None:
+        """Load one No-Intro DAT the user downloaded themselves.
+
+        The app never fetches these and never ships one: they are No-Intro's
+        work and their site gates the download. What it can do is be exact
+        about which of the three buttons on that page was pressed, because
+        "no data loaded" is true and useless to somebody who went to the right
+        page, picked the right system and downloaded a real file.
+        """
+        path = filedialog.askopenfilename(
+            parent=self, title="A No-Intro DAT, as downloaded",
+            filetypes=[("DAT or the zip it came in", "*.zip *.dat *.xml"),
+                       ("Every file", "*")])
+        if not path:
+            return
+        dat = self.catalog.take(path)
+        if not dat:
+            messagebox.showwarning("Cartridge dumps", self.why(dat, path))
+        self.refill()
+
+    @staticmethod
+    def why(dat, path: str) -> str:
+        """Name the mistake and the fix, rather than reporting a blank."""
+        name = os.path.basename(path)
+        if dat.problem is nointro.Problem.DB_EXPORT:
+            return (f"{name} is the DB Export, which carries its data in a "
+                    "different form this app cannot read.\n\n"
+                    "Go back to the same page and take the DAT, or the "
+                    "Parent-Clone DAT. Either one works; Parent-Clone covers "
+                    "a few hundred more unlicensed and aftermarket "
+                    "cartridges.")
+        if dat.problem is nointro.Problem.WRONG_SYSTEM:
+            return (f"{name} is a DAT, but not for a system this app handles. "
+                    "It wants Game Boy, Game Boy Color or Game Boy Advance.")
+        if dat.problem is nointro.Problem.MISSING:
+            return f"{name} is not there any more."
+        if dat.problem is nointro.Problem.NOT_A_DAT:
+            return f"{name} does not hold a DAT at all."
+        return (f"{name} could not be read. If the download was interrupted, "
+                "fetching it again is the fix.")
+
+
+class CollisionDialog(tk.Toplevel):
+    """One name, two different files, and three answers with different costs.
+
+    This happens constantly rather than rarely, because the core's own names
+    collide by design: every cartridge titled ZELDA produces ZELDA.gb, and the
+    second one silently overwrote the first on a real card before this app
+    ever saw it. What is decided here is only the second kind of collision -
+    the name this app is about to write is taken. The first kind, where the
+    card already lost a dump, is a fact about the past and not a question.
+    """
+
+    def __init__(self, parent, prop: dumps.Proposal) -> None:
+        super().__init__(parent)
+        self.result: dumps.Choice | None = None
+        self.title("A name is taken")
+        self.transient(parent)
+        self.resizable(False, False)
+
+        body = ttk.Frame(self, padding=12)
+        body.grid(row=0, column=0, sticky="nsew")
+        standing = prop.rom_standing or prop.dump_standing
+        ttk.Label(body, foreground=FAULT, text=textwrap.fill(
+            f"{prop.rom_name} is already in your library, with different "
+            "contents.", 78), justify="left").grid(row=0, column=0, sticky="w")
+
+        facts = ttk.Frame(body)
+        facts.grid(row=1, column=0, sticky="w", pady=(8, 8))
+        if standing is not None:
+            ttk.Label(facts, foreground=QUIET, font=("TkFixedFont",), text=(
+                f"Already there   {standing.size:>12,} bytes   "
+                f"sha1 {standing.sha1[:12] or '(unreadable)'}"
+                + (f"   filed {standing.filed}" if standing.filed else "")
+            )).grid(row=0, column=0, sticky="w")
+        ttk.Label(facts, foreground=QUIET, font=("TkFixedFont",), text=(
+            f"This dump       {prop.dump.size:>12,} bytes   "
+            f"sha1 {prop.sha1[:12]}")).grid(row=1, column=0, sticky="w")
+
+        # Each button says what it costs, because the three are not variations
+        # on one answer: one keeps both files, one destroys a file, and one
+        # writes nothing at all.
+        keep_as = dumps.suffixed(prop.rom_name or "", prop.sha1)
+        for i, (label, why, choice) in enumerate((
+                ("Keep both", f"file this one as {keep_as}",
+                 dumps.Choice.KEEP_BOTH),
+                ("Replace", "file this one, then delete the old",
+                 dumps.Choice.REPLACE),
+                ("Discard", "leave the library alone; this dump stays on the "
+                 "card", dumps.Choice.DISCARD))):
+            line = ttk.Frame(body)
+            line.grid(row=2 + i, column=0, sticky="ew", pady=(0, 4))
+            ttk.Button(line, text=label, width=11,
+                       command=lambda c=choice: self.answer(c)).pack(side="left")
+            ttk.Label(line, foreground=QUIET, text=why).pack(
+                side="left", padx=(8, 0))
+
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.grab_set()
+        self.wait_window(self)
+
+    def answer(self, choice: dumps.Choice) -> None:
+        self.result = choice
+        self.destroy()
+
+
+class RemoveDialog(tk.Toplevel):
+    """Offer to empty the card, once there is a verified copy to replace it.
+
+    Emptying the card as dumps are filed is what makes the collision hazard
+    survivable: the next dump of a differently-titled cartridge then has
+    nothing to overwrite. It is still asked rather than assumed, because the
+    answer is occasionally no and a card pulled at any point before Remove
+    costs nothing worse than a dump that is still on it.
+
+    Not a preference to be switched off, for the same reason.
+    """
+
+    def __init__(self, parent, filing: dumps.Filing) -> None:
+        super().__init__(parent)
+        self.filing = filing
+        self.title("Remove from the card?")
+        self.transient(parent)
+        self.resizable(False, False)
+
+        body = ttk.Frame(self, padding=12)
+        body.grid(row=0, column=0, sticky="nsew")
+        ttk.Label(body, text="Backed up to").grid(row=0, column=0, sticky="w")
+        # Shown, not described. Somebody about to agree to a deletion should be
+        # able to go and look at the thing that replaces it before answering.
+        ttk.Label(body, foreground=QUIET, text=filing.dump_path).grid(
+            row=1, column=0, sticky="w", pady=(1, 0))
+        btn = open_button(body, holding(filing.dump_path))
+        if btn is not None:
+            btn.grid(row=1, column=1, padx=(8, 0))
+        ttk.Label(body, foreground=READY,
+                  text="Verified byte for byte against the card.").grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=(6, 10))
+
+        name = os.path.basename(filing.proposal.dump.path)
+        ttk.Label(body, text=f"Remove {name} from the card?").grid(
+            row=3, column=0, sticky="w")
+        row = ttk.Frame(body)
+        row.grid(row=4, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(row, text="Remove", width=10,
+                   command=self.remove).pack(side="right")
+        ttk.Button(row, text="Keep", width=10,
+                   command=self.destroy).pack(side="right", padx=(0, 4))
+
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.grab_set()
+        self.wait_window(self)
+
+    def remove(self) -> None:
+        done = dumps.remove_from_card(self.filing)
+        if not done.removed:
+            messagebox.showwarning("Cartridge dumps", done.problem or
+                                   "nothing was removed")
+        self.destroy()
 
 
 class Chooser(tk.Toplevel):
