@@ -28,6 +28,11 @@ import tkinter as tk                                         # noqa: E402
 from test_dumps import dat_xml, gb_rom                        # noqa: E402
 
 
+class Stub:
+    """Stands in for RemoveDialog, which would block on a click."""
+    removed = False
+
+
 def labels(widget) -> list[str]:
     """Every piece of text the dialog actually put on screen."""
     out = []
@@ -174,7 +179,8 @@ class Dialog(unittest.TestCase):
         dlg = self.build()
         dlg.tree.selection_set(p)
         opened = []
-        self.ui.RemoveDialog = lambda parent, filing: opened.append(filing)
+        self.ui.RemoveDialog = lambda parent, filing: (
+            opened.append(filing), Stub())[1]
         dlg.file_one()
         self.assertEqual(
             os.listdir(self.library.roms_dir(self.lib)),
@@ -190,7 +196,7 @@ class Dialog(unittest.TestCase):
         p = self.put("ZELDA.gb", self.zelda)
         dlg = self.build()
         dlg.tree.selection_set(p)
-        self.ui.RemoveDialog = lambda parent, filing: None
+        self.ui.RemoveDialog = lambda parent, filing: Stub()
         dlg.file_one()
         self.assertEqual(self.state(dlg, p), "already filed")
         self.assertIn("disabled", dlg.file_btn.state())
@@ -203,6 +209,35 @@ class Dialog(unittest.TestCase):
         self.assertEqual(self.state(dlg, p), "turned down")
         self.assertTrue(self.dumps.rejected(
             self.dumps.read(p).sha1))
+
+    def test_the_window_does_not_re_read_the_card_to_redraw(self):
+        """Rehashing on every answer would cost the whole scan again.
+
+        Measured at 28 seconds for a real card of 32 dumps over USB, so this
+        is not a micro-optimisation: it is the difference between a window
+        that answers and one that appears to have hung. The card files are
+        deleted underneath the dialog and it still draws, which is only
+        possible if it kept what it was handed.
+        """
+        p = self.put("ZELDA.gb", self.zelda)
+        found = self.dumps.scan(self.card)
+        os.remove(p)
+        dlg = self.ui.DumpsDialog(self.root, self.card, self.cat, found)
+        self.addCleanup(dlg.destroy)
+        self.assertEqual(len(dlg.tree.get_children()), 1)
+        dlg.refill()
+        self.assertEqual(len(dlg.tree.get_children()), 1)
+
+    def test_a_dump_taken_off_the_card_stops_being_listed(self):
+        p = self.put("ZELDA.gb", self.zelda)
+        dlg = self.build()
+        dlg.tree.selection_set(p)
+
+        class Removed(Stub):
+            removed = True
+        self.ui.RemoveDialog = lambda parent, filing: Removed()
+        dlg.file_one()
+        self.assertEqual(dlg.tree.get_children(), ())
 
     # ----------------------------------------------------------- collisions --
     def collide(self):
@@ -221,7 +256,7 @@ class Dialog(unittest.TestCase):
         self.ui.CollisionDialog = type(
             "Stub", (), {"__init__": lambda s, parent, prop: None,
                          "result": choice})
-        self.ui.RemoveDialog = lambda parent, filing: None
+        self.ui.RemoveDialog = lambda parent, filing: Stub()
         dlg.file_one()
 
     def test_a_taken_name_is_a_question_and_not_a_silent_overwrite(self):

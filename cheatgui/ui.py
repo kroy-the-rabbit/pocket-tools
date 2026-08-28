@@ -1047,14 +1047,62 @@ class App(ttk.Frame):
     def show_dumps(self) -> None:
         """The cartridge dumps window, for the card that is in.
 
+        The reading happens here rather than inside the window because it is
+        slow and it must not be done on the Tk thread: hashing a real card of
+        32 dumps, one of them 16 MB, over USB on exFAT measured 28 seconds,
+        and a window that stops answering for that long is indistinguishable
+        from one that has crashed. So it goes through the same modal the card
+        read uses, and the dumps window opens on the answer.
+
         The catalog is held on the App rather than rebuilt here so that DATs
         loaded once stay loaded for as long as the app is up. There is nowhere
         to remember them: a DAT is the user's own download, the app never
         copies one, and prefs keeps decisions rather than files.
         """
-        if self.card is None:
+        if self.card is None or self.dumpjob.busy():
             return
-        DumpsDialog(self, self.card.root, self.catalog)
+        root = self.card.root
+
+        def body(report, cancelled):
+            # dumps.scan() in one call would give no progress, and this is the
+            # one place the app has to say how far along it is. The filtering
+            # is scan()'s own, so a file the core did not write is skipped
+            # here for the same reason it is there.
+            base = dumps.dump_dir(root)
+            try:
+                names = sorted(os.listdir(base))
+            except OSError:
+                return []
+            names = [n for n in names if dumps.is_dump(n)
+                     and os.path.isfile(os.path.join(base, n))]
+            found = []
+            for i, name in enumerate(names):
+                if cancelled():
+                    return found
+                report(i, len(names), name)
+                one = dumps.read(os.path.join(base, name))
+                if one is not None:
+                    found.append(one)
+            return found
+
+        self.working = Working(self, 1, on_cancel=self.dumpjob.cancel)
+        self.working.step(0, 1, "reading the cartridge dumps")
+        self.dumpjob.start(body, self._dumps_progress, self._dumps_read)
+
+    def _dumps_progress(self, done: int, total: int, message: str) -> None:
+        if self.working is not None:
+            self.working.step(done, total, message)
+
+    def _dumps_read(self, found, err) -> None:
+        if self.working is not None:
+            self.working.destroy()
+            self.working = None
+        if err is not None:
+            messagebox.showerror("Cartridge dumps",
+                                 f"the card could not be read.\n\n{err}")
+            return
+        if self.card is not None:
+            DumpsDialog(self, self.card.root, self.catalog, found or [])
 
     def cart_dir(self) -> str | None:
         """Where the selected cartridge's cheat file goes on the card."""
@@ -1814,11 +1862,17 @@ class DumpsDialog(tk.Toplevel):
         dumps.Verdict.UNREADABLE:   ("cannot be read", "fault"),
     }
 
-    def __init__(self, app, card_root: str, catalog) -> None:
+    def __init__(self, app, card_root: str, catalog, found=None) -> None:
         super().__init__(app)
         self.app = app
         self.card_root = card_root
         self.catalog = catalog
+        # Hashed once, by whoever opened this window, and kept. Re-reading the
+        # card after every answer would cost the whole 28 seconds again, and
+        # nothing an answer changes is on the card: the bytes of a dump do not
+        # move because it was filed. `propose()` re-reads only the small local
+        # file that is standing in a name's way.
+        self.found = list(dumps.scan(card_root) if found is None else found)
         self.proposals: dict[str, dumps.Proposal] = {}
         self.title("Cartridge dumps")
         self.transient(app)
@@ -1907,7 +1961,7 @@ class DumpsDialog(tk.Toplevel):
         retune_open(self.lib_open, root)
 
         index = library.load(root) if root else None
-        for dump in dumps.scan(self.card_root):
+        for dump in self.found:
             identity = dumps.identify(dump, self.catalog)
             prop = (dumps.propose(dump, identity, root, index) if root
                     else dumps.Proposal(dump=dump, identity=identity, root="",
@@ -2005,7 +2059,13 @@ class DumpsDialog(tk.Toplevel):
         # Only now is there something to compare the card against, which is
         # why the removal is a second question rather than part of the first.
         if filing.verified:
-            RemoveDialog(self, filing)
+            gone = RemoveDialog(self, filing).removed
+            if gone:
+                # It is not on the card any more, so it is not a row in a
+                # window about what is on the card. The library's index is
+                # what remembers it now.
+                self.found = [d for d in self.found
+                              if d.path != prop.dump.path]
         self.refill()
 
     def turn_down(self) -> None:
@@ -2148,6 +2208,7 @@ class RemoveDialog(tk.Toplevel):
     def __init__(self, parent, filing: dumps.Filing) -> None:
         super().__init__(parent)
         self.filing = filing
+        self.removed = False
         self.title("Remove from the card?")
         self.transient(parent)
         self.resizable(False, False)
@@ -2182,6 +2243,7 @@ class RemoveDialog(tk.Toplevel):
 
     def remove(self) -> None:
         done = dumps.remove_from_card(self.filing)
+        self.removed = done.removed
         if not done.removed:
             messagebox.showwarning("Cartridge dumps", done.problem or
                                    "nothing was removed")
