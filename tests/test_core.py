@@ -138,15 +138,69 @@ class Installed(Env):
 
 
 class Wanted(Env):
-    """Which files the core says you have to supply."""
+    """Which files the core says you have to supply, and which we know it does.
 
-    def test_the_cards_data_json_wins_over_the_table(self) -> None:
+    The answer is the union of the two rather than the core's with ours as a
+    fallback, because a core can be wrong about itself and one of them is: the
+    Game Boy Advance core marks its boot ROM optional and then will not start a
+    game without it. Under a fallback that core got the right answer only
+    because it declared nothing this app kept, which is luck, not a lookup.
+    """
+
+    def test_a_new_file_the_core_declares_is_reported(self) -> None:
+        # The reason the lookup exists at all: a core that starts wanting a
+        # file this app has never heard of still gets it asked for.
+        install_core(self.root, GBC, "1.0", {
+            "name": "Some Other BIOS", "filename": "other.bin",
+            "required": True, "size_exact": 4096})
+        got = {r.filename: r for r in core.wanted(self.root, GBC)}
+        self.assertIn("other.bin", got)
+        self.assertEqual(got["other.bin"].size, 4096)
+
+    def test_a_declaration_does_not_drop_what_the_table_knows(self) -> None:
+        # The half a fallback got wrong. The core naming one file is not the
+        # core saying it no longer needs the other.
         install_core(self.root, GBC, "1.0", {
             "name": "Some Other BIOS", "filename": "other.bin",
             "required": True, "size_exact": 4096})
         got = core.wanted(self.root, GBC)
-        self.assertEqual([r.filename for r in got], ["other.bin"])
-        self.assertEqual(got[0].size, 4096)
+        self.assertEqual([r.filename for r in got],
+                         ["other.bin", "gbc_bios.bin"])
+
+    def test_a_file_both_of_them_name_appears_once(self) -> None:
+        install_core(self.root, GBC, "1.0", {
+            "name": "GBC BIOS", "filename": "gbc_bios.bin",
+            "required": True, "size_exact": 2304})
+        self.assertEqual([r.filename for r in core.wanted(self.root, GBC)],
+                         ["gbc_bios.bin"])
+
+    def test_the_installed_core_settles_a_size_it_disagrees_about(self) -> None:
+        # size_exact is what the framework checks when it fills the slot, so a
+        # file that does not match the core on the card will not load however
+        # sure the table is.
+        install_core(self.root, GBC, "1.0", {
+            "name": "GBC BIOS", "filename": "gbc_bios.bin",
+            "required": True, "size_exact": 2048})
+        got = core.wanted(self.root, GBC)
+        self.assertEqual([(r.filename, r.size) for r in got],
+                         [("gbc_bios.bin", 2048)])
+
+    def test_a_core_that_names_no_size_has_not_disagreed(self) -> None:
+        # Silence is not "any size" when the table knows the number.
+        install_core(self.root, GBC, "1.0", {
+            "name": "GBC BIOS", "filename": "gbc_bios.bin", "required": True})
+        self.assertEqual(core.wanted(self.root, GBC)[0].size, 2304)
+
+    def test_game_boy_advance_marks_its_boot_rom_optional(self) -> None:
+        # The real data.json: slot 4, 16384 bytes, required false. The filter
+        # keeps nothing, and the file still has to be asked for, because the
+        # core's own README says it will not start a game without it.
+        install_core(self.root, GBA, "1.0", {
+            "name": "GBA BIOS", "id": 4, "filename": "gba_bios.bin",
+            "required": False, "size_exact": 16384})
+        got = core.wanted(self.root, GBA)
+        self.assertEqual([(r.filename, r.size) for r in got],
+                         [("gba_bios.bin", 16384)])
 
     def test_browsable_slots_are_not_files_you_supply(self) -> None:
         # Cartridge and Save are required and have no fixed filename. Reporting
@@ -155,12 +209,31 @@ class Wanted(Env):
         self.assertEqual(core.wanted(self.root, GBC), GBC.bios)
 
     def test_optional_fixed_files_are_not_demanded(self) -> None:
+        # A palette is a file you may supply, not one you must, and the table
+        # does not name it. Nothing puts it in the union.
         install_core(self.root, GBC, "1.0", {
             "name": "Palette", "filename": "pal.bin", "required": False})
         self.assertEqual(core.wanted(self.root, GBC), GBC.bios)
 
     def test_an_uninstalled_core_falls_back_to_the_table(self) -> None:
         self.assertEqual(core.wanted(self.root, GB), GB.bios)
+
+    def test_an_unreadable_data_json_still_answers_from_the_table(self) -> None:
+        install_core(self.root, GB, "1.0")
+        write(os.path.join(self.root, "Cores", GB.id, "data.json"), "{oops")
+        self.assertEqual(core.wanted(self.root, GB), GB.bios)
+
+    def test_the_gba_boot_rom_survives_the_core_being_installed(self) -> None:
+        # End to end, which is what the fallback got right by accident: with
+        # the core on the card and the file absent, it is a reported problem.
+        install_core(self.root, GBA, "1.0", {
+            "name": "GBA BIOS", "id": 4, "filename": "gba_bios.bin",
+            "required": False, "size_exact": 16384})
+        bad = core.survey(self.root).problems()
+        self.assertEqual([r.rom.filename for r in bad], ["gba_bios.bin"])
+        self.assertEqual(bad[0].where,
+                         os.path.join("Assets", "gba", "common",
+                                      "gba_bios.bin"))
 
 
 class BootRoms(Env):
@@ -235,6 +308,133 @@ class Versions(unittest.TestCase):
         self.assertIn(GBC.id, got)
 
 
+class StatusLine(unittest.TestCase):
+    """What the core bar says, and how long it is.
+
+    The old line named every core and its version, so it grew with the number
+    of cores: 94 characters offline on a real four-core card, 106 with
+    everything current, 149 with three of the four behind, and past 190 once
+    the cartridge dumper is counted as a fifth. It sits in a single-line label
+    in a grid cell and does not wrap. The length is what these tests pin down
+    alongside the wording, because the wording is easy to keep right by
+    accident and the length was the thing that broke.
+    """
+
+    # The fifth core, at the version the real card carries. Its thirty
+    # characters are what tipped the old line out of the window.
+    DUMPER = core.Core("kroy.CartTools", "carttools", "Cartridge Tools",
+                       "kroy.CartTools_", None, ())
+    DUMPER_VERSION = "0.0.1.41e8d8a"
+
+    def test_no_card_is_not_a_missing_core(self) -> None:
+        text, bad = core.describe(None, releases("2.0"))
+        self.assertEqual(text, "Pocket core: no card")
+        self.assertFalse(bad)
+
+    def test_no_core_keeps_the_sentence_that_matters(self) -> None:
+        # The most important text in the window on a stock card: every button
+        # in the app writes a file nothing will read. Shortening this to fit
+        # would be the one saving that costs something.
+        text, bad = core.describe(core.Survey("/card", every(None), []),
+                                  releases("2.0"))
+        self.assertTrue(bad)
+        self.assertIn("not installed", text)
+        self.assertIn("Nothing written here has any effect until it is.", text)
+
+    def test_current_says_so_and_names_nothing(self) -> None:
+        sv = core.Survey("/card", every("2.0"), [])
+        text, bad = core.describe(sv, releases("2.0"))
+        self.assertEqual(text, f"Pocket core: {len(core.CORES)} installed, "
+                               "all up to date")
+        self.assertFalse(bad)
+        self.assertNotIn("kroy.", text)
+        self.assertNotIn("2.0", text)
+
+    def test_behind_counts_rather_than_lists(self) -> None:
+        have = every("2.0") | {GBC.id: "1.0", GB.id: "1.0", GBA.id: "1.0"}
+        sv = core.Survey("/card", have, [])
+        text, bad = core.describe(sv, releases("2.0"))
+        self.assertEqual(text, f"Pocket core: {len(core.CORES)} installed, "
+                               "3 updates available")
+        self.assertTrue(bad)
+
+    def test_one_update_is_singular(self) -> None:
+        # "1 updates available" is the sort of wrong that makes a carefully
+        # worded line read as generated, so the plural agrees with the count.
+        have = every("2.0") | {GBC.id: "1.0"}
+        text, _ = core.describe(core.Survey("/card", have, []),
+                                releases("2.0"))
+        self.assertIn("1 update available", text)
+        self.assertNotIn("1 updates", text)
+
+    def test_offline_gives_the_count_and_no_verdict(self) -> None:
+        # Without release data the app cannot know whether anything is stale.
+        # The count alone is honest; "all up to date" would be a claim it has
+        # not checked, and a red or an "unknown" would report the network as a
+        # fault with the card.
+        sv = core.Survey("/card", every("2.0"), [])
+        text, bad = core.describe(sv, None)
+        self.assertEqual(text, f"Pocket core: {len(core.CORES)} installed")
+        self.assertFalse(bad)
+        self.assertNotIn("up to date", text)
+        self.assertNotIn("update", text)
+
+    def test_an_empty_release_map_reads_the_same_as_offline(self) -> None:
+        # Nobody has asked yet, or the ask found nothing. Neither is a verdict.
+        sv = core.Survey("/card", every("2.0"), [])
+        self.assertEqual(core.describe(sv, {}), core.describe(sv, None))
+
+    def test_a_fifth_core_does_not_make_the_line_longer(self) -> None:
+        four = core.Survey("/card", every("2.0"), [])
+        fifth = {self.DUMPER.id: self.DUMPER_VERSION}
+        five = core.Survey("/card", every("2.0") | fifth, [])
+        with unittest.mock.patch.object(core, "CORES",
+                                        core.CORES + (self.DUMPER,)):
+            for rels in (None, releases("2.0")):
+                a, _ = core.describe(four, rels)
+                b, _ = core.describe(five, rels)
+                # Same length, because the only thing that changed is a digit.
+                # The old line grew by len(", kroy.CartTools 0.0.1.41e8d8a").
+                self.assertEqual(len(a), len(b))
+                self.assertNotIn(self.DUMPER_VERSION, b)
+                self.assertNotIn(self.DUMPER.id, b)
+
+    def test_it_stays_inside_the_window_in_every_state(self) -> None:
+        # The window's minimum width is 1100 pixels and the label does not
+        # wrap. Characters are the proxy: the worst old line was 149 with four
+        # cores and past 190 with five, and nothing here may approach that.
+        sv = core.Survey("/card", every("2.0") | {GBC.id: "1.0"}, [])
+        states = [core.describe(None, None),
+                  core.describe(core.Survey("/card", every(None), []), None),
+                  core.describe(core.Survey("/card", every("2.0"), []), None),
+                  core.describe(core.Survey("/card", every("2.0"), []),
+                                releases("2.0")),
+                  core.describe(sv, releases("2.0"))]
+        for text, _ in states:
+            self.assertLessEqual(len(text), 80, text)
+
+    def test_bad_is_set_exactly_where_it_was(self) -> None:
+        # The flag drives the colour in ui.py and its meaning is unchanged:
+        # red for no core at all and for something out of date, not for a card
+        # that has not been read and not for having no release data.
+        rels = releases("2.0")
+        behind = core.Survey("/card", every("2.0") | {GBC.id: "1.0"}, [])
+        cases = [
+            ((None, rels), False),
+            ((core.Survey("/card", every(None), []), rels), True),
+            ((core.Survey("/card", every(None), []), None), True),
+            ((core.Survey("/card", every("2.0"), []), rels), False),
+            ((core.Survey("/card", every("2.0"), []), None), False),
+            ((behind, rels), True),
+            # The same card with no release map has nothing to be behind of.
+            ((behind, None), False),
+        ]
+        for args, want in cases:
+            with self.subTest(args=args):
+                self.assertEqual(core.describe(*args)[1], want)
+
+
+
 class Unreleased(unittest.TestCase):
     """A core with nothing published to install.
 
@@ -296,8 +496,11 @@ class Unreleased(unittest.TestCase):
             install_core(root, PCE, "0.1-local")
             sv = core.survey(root)
             self.assertEqual(sv.versions[PCE.id], "0.1-local")
-            self.assertIn(f"{PCE.id} 0.1-local",
-                          core.describe(sv, releases("2.0"))[0])
+            # The status bar counts it. It used to print "kroy.PCE 0.1-local"
+            # there; the version now belongs to the CoresDialog column that
+            # exists to be read against the released one, and the bar's job is
+            # only to say that something is installed and whether it is stale.
+            self.assertIn("1 installed", core.describe(sv, releases("2.0"))[0])
 
 
 class NoBios(Env):

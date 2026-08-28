@@ -32,10 +32,13 @@ Above it is the **Pocket core** bar, which is the one that decides whether any
 of this has an effect at all. A stock Pocket core ignores cheat files, so with
 the card in, press **Cores...**, which lists every core this app writes for
 with what your card has beside what is available. Anything out of date is
-ticked already; press Install. The
-second line of that bar names any boot ROM the core needs and your card does
-not have; those are copyrighted and you have to supply them yourself, but
-the app says exactly which file and which folder. **Eject** when you are done.
+ticked already; press Install. The second line of that bar names any boot ROM
+the core needs and your card does not have, and **Boot ROMs...** beside it
+opens the whole list, with the size each file has to be and the folder it goes
+in. Those are copyrighted and you have to supply them yourself; the app never
+fetches one. The [boot ROM table in the README](../README.md#boot-roms) names
+every file, so you can go and find them before the card is ever plugged in.
+**Eject** when you are done.
 
 ## Verify what you downloaded first
 

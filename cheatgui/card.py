@@ -13,6 +13,12 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 
+# The cartridge dumper's id, which is a platform id on the card in the sense
+# that it owns /Assets/<id>/ and nothing more. Named here because card.py is
+# where the app keeps what it knows about a card's layout; see dumps.py for
+# what is in that directory.
+DUMPER = "carttools"
+
 # Pocket platform id -> the libretro cheat database directory for it, and the
 # ROM extension that goes with it. Everything the app knows how to handle is
 # here whether or not it is switched on; ENABLED below decides what it offers.
@@ -21,6 +27,13 @@ KNOWN = {
     "gbc": ("Nintendo - Game Boy Color", ".gbc"),
     "gba": ("Nintendo - Game Boy Advance", ".gba"),
     "pce": ("NEC - PC Engine - TurboGrafx 16", ".pce"),
+    # The dumper. Both fields are empty because neither exists for it: it is
+    # not a system you play, so libretro has no cheat directory for it, and its
+    # output carries .gb, .gbc or .gba rather than an extension of its own. The
+    # two derived sets below drop an entry with nothing in the field they need,
+    # so switching this on cannot quietly make every extensionless file on the
+    # card look like a ROM or list a dumper as a system with games.
+    DUMPER: ("", ""),
 }
 
 # The systems the app actually offers, in the order they are listed.
@@ -43,10 +56,21 @@ KNOWN = {
 # correctly on it and offering to write cheats for one would be a lie. For the
 # same reason the libretro SuperGrafx and PC Engine CD directories are not
 # mapped: this core runs neither.
+#
+# **The dumper is off.** `carttools` is in KNOWN because the app knows the id
+# and reads the directory it owns, and out of here because the core is not
+# published yet: a system in this tuple is one the app offers, and offering to
+# dump cartridges with a core nobody can install would be a dead button. It
+# goes in when the core does. See dumps.py, which reads the card whether or not
+# this is switched on, because reading is not offering.
 ENABLED = ("gb", "gbc", "gba", "pce")
 
-SUPPORTED = {p: KNOWN[p][0] for p in ENABLED}
-ROM_EXT = {KNOWN[p][1] for p in ENABLED}
+# An entry with nothing in the field a set needs is dropped rather than carried
+# as an empty string. An empty extension would match every file on the card
+# that has none, and an empty cheat directory would put a dumper in the list of
+# systems to browse for games.
+SUPPORTED = {p: KNOWN[p][0] for p in ENABLED if KNOWN[p][0]}
+ROM_EXT = {KNOWN[p][1] for p in ENABLED if KNOWN[p][1]}
 
 # What to call each system before the card has been asked. The card carries
 # its own names in /Platforms/<id>.json, and reading those three small files

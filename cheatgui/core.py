@@ -99,10 +99,12 @@ PCE_REPO = "kroy-the-rabbit/openfpga-pcengine-cheats"
 # because a card may already carry a hand-built copy and reporting its version
 # and its boot ROMs is useful; nothing offers to install or update it.
 #
-# The boot ROMs listed are the fallback for a card that has no core on it yet.
-# Once one is installed its own data.json is asked instead, so a core that
-# starts wanting a different file says so itself. See wanted(). An empty tuple
-# is a real answer, not a missing one: the PC Engine has no boot ROM.
+# The boot ROMs listed are what this app knows a core needs. They are the whole
+# answer for a card with no core on it yet, and once one is installed they are
+# unioned with what its own data.json declares, so a core that starts wanting a
+# different file says so itself and a core that mismarks one we already know
+# about cannot drop it. See wanted(). An empty tuple is a real answer, not a
+# missing one: the PC Engine has no boot ROM.
 CORES = (
     Core("kroy.GBC", "gbc", "Game Boy Color", "kroy.GBC_", GBC_REPO,
          (Rom("gbc_bios.bin", 2304, "GBC BIOS"),)),
@@ -182,7 +184,7 @@ def installed(root: str) -> dict[str, str | None]:
 
 
 def wanted(root: str, core: Core) -> tuple[Rom, ...]:
-    """The fixed-name files this core requires, the core's own answer first.
+    """Every fixed-name file this core needs: what it declares, and the table.
 
     An installed core's data.json lists every slot it loads. A slot with a
     fixed `filename` is one the Pocket fills without asking, which means it is
@@ -190,6 +192,21 @@ def wanted(root: str, core: Core) -> tuple[Rom, ...]:
     save) have no filename and are not this. Reading it rather than trusting
     the table above means a core that adds a boot ROM is reported correctly by
     a copy of this app that predates it.
+
+    The two are unioned rather than the table being a fallback, because a core
+    can be wrong about itself. The Game Boy Advance core declares gba_bios.bin
+    `required: false` where both Game Boy cores mark theirs true, and its own
+    README says of that file that the core will not start a game without it.
+    Under a fallback that core keeps nothing, drops through to the table, and
+    gets the right answer by luck: delete the table entry and the GBA boot ROM
+    silently stops being reported on a card that has the core installed. The
+    union keeps the reason the lookup exists while leaving a core that
+    mismarks a file we already know about unable to drop it.
+
+    The cost is that a core which legitimately stops needing a boot ROM keeps
+    being asked for one until the table is edited. The table is ours and that
+    is a one-line edit, against a failure mode that otherwise looks like a
+    working install and then refuses to start anything.
     """
     path = os.path.join(root, "Cores", core.id, "data.json")
     try:
@@ -197,11 +214,29 @@ def wanted(root: str, core: Core) -> tuple[Rom, ...]:
             slots = json.load(f)["data"]["data_slots"]
     except Exception:                                        # noqa: BLE001
         return core.bios
-    found = tuple(Rom(s["filename"], int(s.get("size_exact") or 0),
-                      s.get("name") or s["filename"])
-                  for s in slots
-                  if s.get("filename") and s.get("required"))
-    return found or core.bios
+    table = {r.filename: r for r in core.bios}
+    found: list[Rom] = []
+    for s in slots:
+        name = s.get("filename")
+        if not name or not s.get("required"):
+            continue
+        # Where the core and the table disagree about a size, the core wins.
+        # `required` is a claim about whether a file matters, which is the sort
+        # of thing a core is careless about; `size_exact` is what the framework
+        # itself checks when it fills the slot, so a file that does not match
+        # the installed core's number will not load however sure the table is.
+        # The table is also a snapshot of what the core wanted when this app
+        # shipped, and the card is carrying the version being run.
+        #
+        # A core that names no size has not disagreed, it has said nothing, so
+        # the table's number stands rather than being read as "any size".
+        size = int(s.get("size_exact") or 0)
+        if not size and name in table:
+            size = table[name].size
+        found.append(Rom(name, size, s.get("name") or name))
+    named = {r.filename for r in found}
+    found.extend(r for r in core.bios if r.filename not in named)
+    return tuple(found)
 
 
 def rom_dirs(root: str, core: Core) -> list[str]:
@@ -367,24 +402,57 @@ def outdated(versions: dict[str, str | None],
 
 def describe(sv: Survey | None,
              rels: dict[str, dict] | None) -> tuple[str, bool]:
-    """One line for the status bar, and whether it is bad news."""
+    """One line for the status bar, and whether it is bad news.
+
+    This named every installed core and its version before it said anything
+    about staleness, which meant one non-wrapping label in a grid cell was
+    answering two questions that both grow with the number of cores: what
+    have I got, and is any of it stale. Measured against a real card with
+    four cores on it that came to 94 characters offline, 106 with everything
+    current and 149 with three of the four behind, and the cartridge dumper
+    is a fifth core carrying `kroy.CartTools 0.0.1.41e8d8a`, which is another
+    thirty and puts the worst case past 190 in a window whose minimum width
+    is 1100 pixels. The line does not wrap. It ran out of window.
+
+    The first question is a table and CoresDialog already draws it, a row per
+    core with what the card has beside what is available, which is strictly
+    better than the same data comma-separated. Only the second question
+    belongs on a status bar, so this counts rather than enumerates and its
+    length stops depending on how many cores this app knows about. The
+    Cores... button sits next to the label and answers "which ones".
+    """
     if sv is None:
         return "Pocket core: no card", False
-    have = [f"{c.id} {sv.versions[c.id]}" for c in CORES if sv.versions[c.id]]
-    if not have:
+    n = sum(1 for v in sv.versions.values() if v)
+    if not n:
+        # The most important sentence in the window on a stock card, and the
+        # reason this state is worded rather than counted: every button in
+        # this app writes a file that nothing on the handheld will read, and
+        # a bare "0 installed" does not say that to anyone.
         return ("Pocket core: not installed. Nothing written here has any "
                 "effect until it is."), True
-    line = "Pocket core: " + ", ".join(have)
+    line = f"Pocket core: {n} installed"
     if not rels:
-        # Nothing to compare against, whether because nobody has asked yet or
-        # because the ask found no releases at all. Neither is "up to date".
+        # No release data, because nobody has asked yet or because the ask
+        # could not reach GitHub. The count with no verdict after it is the
+        # only honest ending: "all up to date" is a claim this app has not
+        # checked and would be wrong exactly when it matters, and spelling
+        # the gap out - "update status unknown" - reports the network as a
+        # fault with the card and earns the red that belongs to a real one.
+        # A machine that has not asked does not know, and saying only what it
+        # does know reads as neither a problem nor a clean bill of health.
+        # When the ask was tried and failed the caller has better information
+        # than this function does, and ui.py appends its own "(could not
+        # reach the release page)" to say so; there is nothing to add here.
         return line, False
     behind = outdated(sv.versions, rels)
     if not behind:
-        return line + "  up to date", False
-    versions = sorted({release_for(c, rels)["version"] for c in behind})
-    names = ", ".join(c.id for c in behind)
-    return f"{line}  update available: {', '.join(versions)} ({names})", True
+        return line + ", all up to date", False
+    # Exactly the cores CoresDialog would offer to write, counted instead of
+    # named. "1 updates available" is the kind of wrong that makes a careful
+    # line look generated, so the plural is agreed with the number.
+    s = "" if len(behind) == 1 else "s"
+    return f"{line}, {len(behind)} update{s} available", True
 
 
 def describe_roms(sv: Survey | None) -> tuple[str, bool]:
@@ -405,26 +473,6 @@ def describe_roms(sv: Survey | None) -> tuple[str, bool]:
         parts.append("wrong size: " + ", ".join(r.rom.filename for r in wrong))
     return ("boot ROMs: " + "; ".join(parts)
             + ". The core will not start a game without them."), True
-
-
-def rom_advice(sv: Survey) -> str:
-    """The whole story for the dialog: what, how big, and where it goes."""
-    lines = ["A boot ROM is the code the console runs before the game does.",
-             "It is copyrighted, so it is not in the core and it is not in "
-             "this app. Dump it from your own hardware or supply your own "
-             "copy.", ""]
-    for r in sv.roms:
-        size = f"{r.rom.size} bytes" if r.rom.size else "any size"
-        if r.path is None:
-            lines.append(f"MISSING  {r.rom.filename}  ({r.rom.what}, {size})")
-            lines.append(f"         put it at  {r.where}")
-        elif r.wrong_size:
-            lines.append(f"WRONG    {r.rom.filename}  is {r.size} bytes, "
-                         f"the {r.core.title} core wants {size}")
-            lines.append(f"         at  {r.path}")
-        else:
-            lines.append(f"ok       {r.rom.filename}  ({r.rom.what}, {size})")
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------- installing --
