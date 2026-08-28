@@ -13,6 +13,9 @@ what a ROM patch needs. See docs/CHEATS.md.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
+import sys
 import textwrap
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -2088,24 +2091,15 @@ class DumpsDialog(tk.Toplevel):
         self.refill()
 
     def add_dat(self) -> None:
-        """Load one No-Intro DAT the user downloaded themselves.
+        """The No-Intro window, which finds the downloads rather than asking.
 
-        The app never fetches these and never ships one: they are No-Intro's
-        work and their site gates the download. What it can do is be exact
-        about which of the three buttons on that page was pressed, because
-        "no data loaded" is true and useless to somebody who went to the right
-        page, picked the right system and downloaded a real file.
+        This used to be a file chooser pointed at the whole filesystem, which
+        was the wrong question: there are three of these files, their names
+        are fixed by the site that issues them, and they are in the directory
+        the browser puts downloads in.
         """
-        path = filedialog.askopenfilename(
-            parent=self, title="A No-Intro DAT, as downloaded",
-            filetypes=[("DAT or the zip it came in", "*.zip *.dat *.xml"),
-                       ("Every file", "*")])
-        if not path:
-            return
-        dat = self.catalog.take(path)
-        if not dat:
-            messagebox.showwarning("Cartridge dumps", self.why(dat, path))
-        self.refill()
+        if DatDialog(self, self.catalog).loaded:
+            self.refill()
 
     @staticmethod
     def why(dat, path: str) -> str:
@@ -2127,6 +2121,299 @@ class DumpsDialog(tk.Toplevel):
             return f"{name} does not hold a DAT at all."
         return (f"{name} could not be read. If the download was interrupted, "
                 "fetching it again is the fix.")
+
+
+DATOMATIC = "https://datomatic.no-intro.org/"
+
+
+def download_dirs() -> list[str]:
+    """Where a browser is likely to have put a download, most likely first.
+
+    XDG_DOWNLOAD_DIR is asked for first because a desktop that has been told
+    where downloads go is telling the truth, and ~/Downloads is only the
+    default it usually holds. Both are checked because the setting is often
+    absent and the directory is there anyway.
+    """
+    out = []
+    xdg = os.environ.get("XDG_DOWNLOAD_DIR")
+    if xdg:
+        out.append(os.path.expanduser(xdg))
+    for name in ("Downloads", "Desktop"):
+        out.append(os.path.expanduser(os.path.join("~", name)))
+    seen, keep = set(), []
+    for d in out:
+        real = os.path.abspath(d)
+        if real not in seen and os.path.isdir(real):
+            seen.add(real)
+            keep.append(real)
+    return keep
+
+
+def native_open(parent, title: str) -> str | None:
+    """A file chooser, preferring the desktop's own over Tk's.
+
+    Tk's X11 chooser is its own creation and looks like nothing else on the
+    machine. Where the desktop ships a real one -- kdialog on KDE, zenity
+    almost everywhere else -- handing the job over costs one subprocess and
+    gets a dialog that behaves the way every other dialog on that desktop
+    does. Anything unexpected falls back to Tk rather than to nothing.
+    """
+    if sys.platform not in ("win32", "darwin"):
+        for cmd, args in (("kdialog", ["--getopenfilename", os.path.expanduser("~"),
+                                       "*.zip *.dat *.xml|DAT files"]),
+                          ("zenity", ["--file-selection",
+                                      "--title", title,
+                                      "--file-filter=DAT files | *.zip *.dat *.xml",
+                                      "--file-filter=Every file | *"])):
+            if shutil.which(cmd) is None:
+                continue
+            try:
+                done = subprocess.run([cmd, *args], capture_output=True,
+                                      text=True, timeout=300)
+            except (OSError, subprocess.SubprocessError):
+                break        # it is there and it did not work; use Tk's
+            if done.returncode == 0 and done.stdout.strip():
+                return done.stdout.strip()
+            if done.returncode in (1, 2):
+                return None  # the user cancelled, which is an answer
+            break
+    return filedialog.askopenfilename(
+        parent=parent, title=title,
+        filetypes=[("A DAT, or the zip it came in", "*.zip *.dat *.xml"),
+                   ("Every file", "*")]) or None
+
+
+class DatDialog(tk.Toplevel):
+    """The No-Intro DAT files, found where the browser left them.
+
+    Asking somebody to go and find these in a file chooser was the wrong
+    question. There are exactly three of them, their names are fixed by the
+    site that issues them, and they land in the one directory a browser puts
+    downloads in - so the app can look, say what it found, and let the answer
+    be a tick rather than a filesystem expedition. Browse... is still here for
+    a file kept somewhere else, and it hands the job to the desktop's own
+    chooser where there is one.
+
+    The data itself comes from No-Intro, who publish it and gate the download
+    behind their own site, so Get DATs... opens that page rather than the app
+    fetching anything. Pointing somebody at the source is the useful thing to
+    do here: it is one click, it is always the current version, and it is
+    credited to the people who compiled it.
+    """
+
+    WIDTH = 92
+
+    def __init__(self, app, catalog) -> None:
+        super().__init__(app)
+        self.catalog = catalog
+        self.loaded = False              # did anything change while we were up
+        self.rows: dict[str, tuple] = {}
+        self.title("No-Intro data")
+        self.transient(app)
+        self.columnconfigure(0, weight=1)
+
+        body = ttk.Frame(self, padding=12)
+        body.grid(row=0, column=0, sticky="nsew")
+        body.columnconfigure(0, weight=1)
+
+        ttk.Label(body, text="No-Intro DAT files").grid(
+            row=0, column=0, sticky="w")
+        ttk.Label(body, foreground=QUIET, justify="left", text=textwrap.fill(
+            "Naming a dump correctly needs No-Intro's data. Get DATs... opens "
+            "their download page: take the DAT, or the Parent-Clone DAT, for "
+            "each system you dump, with the defaults left alone. Parent-Clone "
+            "covers a few hundred more unlicensed and aftermarket cartridges. "
+            "The DB Export is a different format and cannot be read.",
+            self.WIDTH)).grid(row=1, column=0, sticky="w", pady=(2, 8))
+
+        cols = ("system", "kind", "entries")
+        self.tree = ttk.Treeview(body, columns=cols, show="tree headings",
+                                 selectmode="none", height=7)
+        self.tree.heading("#0", text="File")
+        self.tree.heading("system", text="System")
+        self.tree.heading("kind", text="What it is")
+        self.tree.heading("entries", text="Entries")
+        self.tree.column("#0", width=400, stretch=True)
+        # "Nintendo - " on every row of a window that is only ever about
+        # Nintendo handhelds is 11 characters of nothing, and it was pushing
+        # the filename - the part that tells two downloads apart - out of view.
+        self.tree.column("system", width=125, stretch=False)
+        self.tree.column("kind", width=130, stretch=False, anchor="center")
+        self.tree.column("entries", width=80, stretch=False, anchor="e")
+        self.tree.grid(row=2, column=0, sticky="ew")
+        self.tree.tag_configure("dead", foreground=IDLE)
+        self.tree.tag_configure("bad", foreground=LESSER)
+        self.tree.tag_configure("on", foreground=READY)
+        self.tree.bind("<Button-1>", self.toggle)
+
+        self.note = ttk.Label(body, foreground=QUIET, justify="left")
+        self.note.grid(row=3, column=0, sticky="w", pady=(8, 0))
+
+        row = ttk.Frame(body)
+        row.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        ttk.Button(row, text="Close", command=self.destroy).pack(side="right")
+        ttk.Button(row, text="Load ticked", width=12,
+                   command=self.load).pack(side="right", padx=(0, 4))
+        # Their page, opened in the browser, because the one thing this window
+        # cannot do for you is the download itself.
+        ttk.Button(row, text="Get DATs...", width=12,
+                   command=self.get).pack(side="left")
+        ttk.Button(row, text="Browse...", width=11,
+                   command=self.browse).pack(side="left", padx=(4, 0))
+        ttk.Button(row, text="Look again", width=11,
+                   command=self.refill).pack(side="left", padx=(4, 0))
+
+        self.refill()
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.grab_set()
+        self.wait_window(self)
+
+    # ------------------------------------------------------------ the list --
+    def candidates(self) -> list[str]:
+        """Files whose names say No-Intro issued them, newest name last.
+
+        Matched on the name rather than opened, because a downloads directory
+        holds archives that are megabytes each and nothing here is worth
+        reading a ROM set to find out. No-Intro's filenames start with the
+        system name, which is the same string the DAT header carries, so the
+        test is the one `nointro.system_for` already makes.
+        """
+        found = []
+        for d in download_dirs():
+            try:
+                names = sorted(os.listdir(d))
+            except OSError:
+                continue
+            for n in names:
+                if not n.lower().endswith((".zip", ".dat", ".xml")):
+                    continue
+                if nointro.system_for(n):
+                    found.append(os.path.join(d, n))
+        return found
+
+    def refill(self) -> None:
+        """Look again, and describe what is there. Loads nothing."""
+        self.tree.delete(*self.tree.get_children())
+        self.rows.clear()
+        for path in self.candidates():
+            # Probed, not loaded: describing a file must not change what the app
+            # is searching. Loading is what the tick is for.
+            dat = nointro.load(path)
+            live = self.catalog.get(nointro.system_for(os.path.basename(path)))
+            already = bool(dat) and bool(live) and live.version == dat.version \
+                and live.flavour == dat.flavour
+            if dat:
+                kind = "Parent-Clone" if dat.flavour == nointro.PARENT_CLONE \
+                    else "DAT"
+                system = self.plainly(dat.system)
+                entries = f"{len(dat):,}"
+                tag = "on" if already else ""
+                tick = TICK if already else UNTICK
+            else:
+                kind = self.shortly(dat)
+                system = self.plainly(
+                    nointro.system_for(os.path.basename(path)))
+                entries = ""
+                tag = "bad"
+                tick = " "
+            self.rows[path] = (dat, already)
+            self.tree.insert("", "end", iid=path,
+                             text=f"{tick} {os.path.basename(path)}",
+                             values=(system, kind, entries),
+                             tags=(tag,) if tag else ())
+        where = ", ".join(self.short(d) for d in download_dirs())
+        if self.rows:
+            self.note.config(text=textwrap.fill(
+                f"Looked in {where}. Tick what you want and press Load "
+                "ticked; a file already loaded is ticked and green.",
+                self.WIDTH), foreground=QUIET)
+        else:
+            self.note.config(text=textwrap.fill(
+                f"Nothing that looks like a No-Intro DAT in {where}. Press "
+                "Get DATs... to fetch them, or Browse... if you keep them "
+                "somewhere else.", self.WIDTH), foreground=LESSER)
+
+    @staticmethod
+    def plainly(system: str) -> str:
+        """The system, without the maker every row would repeat."""
+        full = nointro.SYSTEMS.get(system, "")
+        return full[len("Nintendo - "):] if full else ""
+
+    @staticmethod
+    def short(path: str) -> str:
+        home = os.path.expanduser("~")
+        return "~" + path[len(home):] if path.startswith(home) else path
+
+    @staticmethod
+    def shortly(dat) -> str:
+        """Two or three words for the table; the sentence is elsewhere."""
+        return {nointro.Problem.DB_EXPORT: "DB Export",
+                nointro.Problem.WRONG_SYSTEM: "another system",
+                nointro.Problem.NOT_A_DAT: "no DAT inside",
+                nointro.Problem.MISSING: "gone"}.get(dat.problem, "unreadable")
+
+    # --------------------------------------------------------------- acting --
+    def toggle(self, evt) -> None:
+        """Tick a row, the way the cores dialog ticks a core."""
+        iid = self.tree.identify_row(evt.y)
+        if not iid or self.tree.identify_region(evt.x, evt.y) == "heading":
+            return
+        dat, _ = self.rows.get(iid, (None, False))
+        if not dat:
+            # A file that cannot be read is not a choice. Saying why beats a
+            # tick that does nothing when it is pressed.
+            messagebox.showwarning("No-Intro data",
+                                   DumpsDialog.why(dat, iid) if dat is not None
+                                   else f"{os.path.basename(iid)} cannot be "
+                                        "read as a DAT.")
+            return
+        text = self.tree.item(iid, "text")
+        self.tree.item(iid, text=(UNTICK if text.startswith(TICK) else TICK)
+                       + text[1:])
+
+    def ticked(self) -> list[str]:
+        return [i for i in self.tree.get_children()
+                if str(self.tree.item(i, "text")).startswith(TICK)]
+
+    def load(self) -> None:
+        """Load every ticked file into the catalog, and say what happened."""
+        picked = self.ticked()
+        if not picked:
+            return
+        bad = []
+        for path in picked:
+            if not self.catalog.take(path):
+                bad.append(os.path.basename(path))
+            else:
+                self.loaded = True
+        self.refill()
+        if bad:
+            messagebox.showwarning(
+                "No-Intro data",
+                "These could not be read:\n\n" + "\n".join(bad))
+        else:
+            self.destroy()
+
+    def browse(self) -> None:
+        """One file from anywhere, through the desktop's own chooser."""
+        path = native_open(self, "A No-Intro DAT, as downloaded")
+        if not path:
+            return
+        dat = self.catalog.take(path)
+        if not dat:
+            messagebox.showwarning("No-Intro data",
+                                   DumpsDialog.why(dat, path))
+        else:
+            self.loaded = True
+        self.refill()
+
+    def get(self) -> None:
+        """Open No-Intro's download page in the browser."""
+        if not reveal.website(DATOMATIC):
+            messagebox.showinfo(
+                "No-Intro data",
+                "Could not open a browser here. The address is:\n\n"
+                + DATOMATIC)
 
 
 class CollisionDialog(tk.Toplevel):

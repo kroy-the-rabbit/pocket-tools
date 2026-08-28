@@ -64,6 +64,29 @@ def directory(path: str) -> bool:
     return _launch(path)
 
 
+def website(url: str) -> bool:
+    """Open a page in the browser. True if the handoff was made.
+
+    Here rather than anywhere else because it is the same job as the rest of
+    this module - hand something to the desktop and stop caring - and it fails
+    the same way, quietly. `webbrowser` is standard library and picks the same
+    opener the file manager calls do, so this needs no command table of its
+    own; it can still return False on a machine with no browser configured,
+    and the URL is always on screen beside the button that offers it.
+    """
+    if not url.startswith(("http://", "https://")):
+        # Never hand an arbitrary string to a URL opener. Nothing in this app
+        # builds one from user input today, and this is what keeps that true.
+        say.err(f"reveal: refusing to open {url!r}")
+        return False
+    try:
+        import webbrowser
+        return bool(webbrowser.open(url))
+    except Exception as e:                                   # noqa: BLE001
+        say.err(f"reveal: cannot open {url}: {e}")
+        return False
+
+
 def containing(path: str) -> bool:
     """Open the directory holding `path`, for pointing at one file.
 

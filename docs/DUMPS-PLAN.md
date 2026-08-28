@@ -72,6 +72,16 @@ work, their terms, and their site gates downloads; bundling a copy would be
 taking it. The app asks for a file the user fetched themselves, and says so
 plainly when it is missing.
 
+**The app hands over the link rather than making anyone go looking.** The
+No-Intro window lists the DAT files it finds where the browser puts downloads,
+says which system and which flavour each one is and how many entries it holds,
+and loads the ones that are ticked. A **Get DATs...** button opens No-Intro's
+download page. That is the useful thing to do with somebody else's data: point
+at the source, in one click, always at the current version, credited to the
+people who compiled it. Browse... is still there for a file kept elsewhere, and
+hands the job to the desktop's own chooser where there is one, because Tk's X11
+file dialog looks like nothing else on the machine.
+
 From <https://datomatic.no-intro.org/>, Download section, **defaults left
 alone**, one file per system:
 

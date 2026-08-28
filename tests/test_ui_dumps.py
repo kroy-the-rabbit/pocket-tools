@@ -317,6 +317,86 @@ class Dialog(unittest.TestCase):
         note = dlg.dat_label.cget("text")
         self.assertIn("Game Boy", note)
 
+    # ----------------------------------------------------------- the DATs --
+    def dat_dir(self) -> str:
+        """A stand-in downloads directory holding what a browser would leave."""
+        d = os.path.join(self.tmp.name, "Downloads")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "Nintendo - Game Boy (20260827).dat"),
+                  "w") as f:
+            f.write(dat_xml(self.nointro.SYSTEMS["gb"], [
+                {"name": "Tetris (World) (Rev 1)",
+                 "rom": "Tetris (World) (Rev 1).gb", "data": self.tetris}]))
+        # A DB Export is well-formed until it is not: two top-level elements.
+        with open(os.path.join(d, "Nintendo - Game Boy (DB Export).xml"),
+                  "w") as f:
+            f.write("<?xml version='1.0'?>\n<header><name>x</name></header>\n"
+                    "<datafile><game name='x'/></datafile>\n")
+        with open(os.path.join(d, "holiday-photos.zip"), "wb") as f:
+            f.write(b"not a dat")
+        self.ui.download_dirs = lambda: [d]
+        self.addCleanup(setattr, self.ui, "download_dirs",
+                        self.ui.__dict__["download_dirs"])
+        return d
+
+    def dats(self):
+        self.dat_dir()
+        dlg = self.ui.DatDialog(self.root, self.nointro.Catalog())
+        self.addCleanup(dlg.destroy)
+        return dlg
+
+    def test_the_downloads_are_found_without_anybody_browsing_for_them(self):
+        dlg = self.dats()
+        names = [os.path.basename(i) for i in dlg.tree.get_children()]
+        self.assertIn("Nintendo - Game Boy (20260827).dat", names)
+        self.assertIn("Nintendo - Game Boy (DB Export).xml", names)
+
+    def test_a_zip_that_is_not_a_dat_is_never_opened_to_find_out(self):
+        """Matched on the name, because a downloads folder holds big archives."""
+        dlg = self.dats()
+        names = [os.path.basename(i) for i in dlg.tree.get_children()]
+        self.assertNotIn("holiday-photos.zip", names)
+
+    def test_a_readable_dat_says_its_flavour_and_how_many_it_holds(self):
+        dlg = self.dats()
+        iid = next(i for i in dlg.tree.get_children() if "DB Export" not in i)
+        self.assertEqual(dlg.tree.set(iid, "kind"), "DAT")
+        self.assertEqual(dlg.tree.set(iid, "system"), "Game Boy")
+        self.assertEqual(dlg.tree.set(iid, "entries"), "1")
+
+    def test_a_db_export_is_shown_and_cannot_be_ticked(self):
+        dlg = self.dats()
+        iid = next(i for i in dlg.tree.get_children() if "DB Export" in i)
+        self.assertEqual(dlg.tree.set(iid, "kind"), "DB Export")
+        self.assertEqual(dlg.tree.item(iid, "tags")[0], "bad")
+        self.assertNotIn(iid, dlg.ticked())
+
+    def test_ticking_a_dat_and_loading_it_puts_it_in_the_catalog(self):
+        dlg = self.dats()
+        iid = next(i for i in dlg.tree.get_children() if "DB Export" not in i)
+        dlg.tree.item(iid, text=self.ui.TICK + dlg.tree.item(iid, "text")[1:])
+        self.assertEqual(dlg.ticked(), [iid])
+        dlg.load()
+        self.assertEqual(dlg.catalog.loaded(), ("gb",))
+        self.assertTrue(dlg.loaded)
+
+    def test_the_maker_is_not_repeated_on_every_row(self):
+        self.assertEqual(self.ui.DatDialog.plainly("gba"), "Game Boy Advance")
+        self.assertEqual(self.ui.DatDialog.plainly(""), "")
+
+    def test_get_dats_opens_the_page_it_names(self):
+        opened = []
+        real = self.ui.reveal.website
+        self.ui.reveal.website = lambda url: (opened.append(url), True)[1]
+        self.addCleanup(setattr, self.ui.reveal, "website", real)
+        dlg = self.dats()
+        dlg.get()
+        self.assertEqual(opened, [self.ui.DATOMATIC])
+        self.assertTrue(self.ui.DATOMATIC.startswith("https://"))
+
+    def test_a_url_that_is_not_a_web_page_is_refused(self):
+        self.assertFalse(self.ui.reveal.website("file:///etc/passwd"))
+
     # ---------------------------------------------------------------- Open --
     def test_no_open_button_where_there_is_no_file_manager(self):
         real = self.ui.reveal.available
