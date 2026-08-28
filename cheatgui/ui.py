@@ -992,7 +992,9 @@ class App(ttk.Frame):
         Pocket all work on it with no special case anywhere, and Copy to card
         is the one step that makes it true.
 
-        The path is where the ROM would go whether or not it is there yet.
+        The path is where the ROM would go whether or not it is there yet:
+        /Assets/cartdumps/<system>/, not the system's common/ root. See
+        card.CARTDUMPS for why, and for what it costs.
         """
         root = library.path()
         if not root or self.card is None:
@@ -1002,7 +1004,7 @@ class App(ttk.Frame):
             if not row.rom or not row.system:
                 continue        # unidentified: there is no name to file under
             out.append(card_mod.Game(
-                os.path.join(self.card.root, "Assets", row.system, "common",
+                os.path.join(card_mod.cartdumps_dir(self.card.root, row.system),
                              row.rom), row.system))
         return sorted(out, key=lambda g: (g.platform, g.name.lower()))
 

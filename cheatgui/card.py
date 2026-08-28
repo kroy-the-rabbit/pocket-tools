@@ -19,6 +19,31 @@ from dataclasses import dataclass, field
 # what is in that directory.
 DUMPER = "carttools"
 
+# Where a filed dump goes when it is copied back: /Assets/cartdumps/<system>/.
+#
+# One folder at the top of Assets, split by system inside it, and not a folder
+# under each system's common/. The Pocket's file browser is rooted at /Assets
+# and filters by the data slot's extensions -- the "Back" entry at the top of
+# the list walks up to Assets itself -- so every core can reach this, and the
+# GB core browsing here sees "[Cartridge]: GB, GBC files". Verified on the real
+# card, against Cores/kroy.GB/data.json, after the opposite was assumed and was
+# wrong.
+#
+# Not common/ itself because a dump landing loose among the hundreds of ROMs
+# already there is findable only by date, which is how the first version of
+# this lost 33 of them in plain sight.
+#
+# The cost is that scan() walks /Assets/<pid> and so does not see these: a
+# copied-back dump is not listed under its system. It does not need to be. It
+# is listed under Cartridge dumps, on_card() stats this path directly, and
+# show_shelf() reads each cht file rather than asking a scan whether it exists.
+CARTDUMPS = "cartdumps"
+
+
+def cartdumps_dir(root: str, pid: str) -> str:
+    """The folder on the card holding filed dumps for one system."""
+    return os.path.join(root, "Assets", CARTDUMPS, pid)
+
 # Pocket platform id -> the libretro cheat database directory for it, and the
 # ROM extension that goes with it. Everything the app knows how to handle is
 # here whether or not it is switched on; ENABLED below decides what it offers.

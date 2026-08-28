@@ -400,8 +400,48 @@ class Dialog(unittest.TestCase):
         self.assertEqual([g.name for g in shelf], ["Tetris (World) (Rev 1)"])
         self.assertEqual(shelf[0].platform, "gb")
         self.assertEqual(shelf[0].path,
-                         os.path.join(self.card, "Assets", "gb", "common", rom))
+                         os.path.join(self.card, "Assets", "cartdumps", "gb",
+                                      rom))
         self.assertEqual(shelf[0].cht_path, shelf[0].path + ".cht")
+
+    def test_a_dump_goes_to_its_own_folder_not_loose_among_the_card_roms(self):
+        """Findable. Loose in common/ they are 33 files among hundreds.
+
+        The cheat file follows without being told to, because cht_path is the
+        ROM path with .cht appended and the ROM path is now the one in here.
+        """
+        app, rom = self.shelved()
+        g = self.ui.App.shelf(app)[0]
+        parent = os.path.dirname(g.path)
+        self.assertEqual(os.path.basename(parent), "gb")
+        self.assertEqual(os.path.basename(os.path.dirname(parent)),
+                         self.ui.card_mod.CARTDUMPS)
+        self.assertTrue(g.cht_path.startswith(parent + os.sep))
+
+    def test_dumps_sit_at_the_top_of_assets_where_every_core_can_browse_them(self):
+        """Not under one system, because the browser is rooted at /Assets.
+
+        The Pocket walks up to Assets from any core and filters by the slot's
+        extensions, so one place serves all three. Pinned because the opposite
+        was assumed once and the whole layout was built on it.
+        """
+        app, rom = self.shelved()
+        g = self.ui.App.shelf(app)[0]
+        self.assertEqual(
+            os.path.dirname(os.path.dirname(g.path)),
+            os.path.join(self.card, "Assets", self.ui.card_mod.CARTDUMPS))
+        self.assertNotIn(os.sep + "common" + os.sep, g.path)
+
+    def test_copying_creates_the_folder_when_it_is_the_first_dump_back(self):
+        app, rom = self.shelved()
+        g = self.ui.App.shelf(app)[0]
+        self.assertFalse(os.path.isdir(os.path.dirname(g.path)))
+        app.games, app.ready = [g], {}
+        app.selected_game = lambda: g
+        app.status = type("S", (), {"config": lambda s, **k: None})()
+        app.refresh_shelf = lambda: None
+        self.ui.App.copy_to_card(app)
+        self.assertTrue(os.path.isfile(g.path))
 
     def test_copying_a_dump_back_puts_the_bytes_where_the_pocket_looks(self):
         app, rom = self.shelved()

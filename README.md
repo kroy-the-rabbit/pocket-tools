@@ -279,10 +279,21 @@ opposites and filing them together would say they were alike.
 
 It lists everything in your library, grouped by system. **A dimmed row is one
 that is not on the card**; a normal one is already there. Select a dimmed row
-and press **Copy to card**, and the ROM is written where the Pocket looks for it — under its real No-Intro name, which is what
-makes the cheat matcher find the right file without being asked. After that it
-is an ordinary ROM: it shows up under its own system, and **Send to Pocket**
-writes its cheats beside it like any other.
+and press **Copy to card**, and the ROM is written to
+`Assets/cartdumps/<system>/` under its real No-Intro name, which is what makes
+the cheat matcher find the right file without being asked. **Send to Pocket**
+then writes its cheats into the same folder, beside the ROM, like any other.
+
+Your dumps go in one place of their own rather than loose among the hundreds of
+ROMs already in `common/`, where the only thing marking them as yours would be
+their date. It sits at the top of `Assets/` because the Pocket's file browser
+is rooted there — **Back** at the top of the list walks up to it — and filters
+by what the core can load, so all three cores reach the same `cartdumps` and
+each sees only its own systems inside.
+
+The trade is that a copied-back dump is **not** listed under its own system in
+this app, because that list is built by walking `Assets/<system>/`. It is
+listed under **Cartridge dumps**, which is where you went looking for it.
 
 Game Boy, Game Boy Color and Game Boy Advance all dump. This is a different
 thing from the cartridge *play* support above, which is Game Boy and Game Boy

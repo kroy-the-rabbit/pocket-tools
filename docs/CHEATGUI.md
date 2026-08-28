@@ -465,6 +465,32 @@ is a decision rather than an observation and lives in `prefs.py` - which is
 where a rejection and a pinned cheat file go. `library.Row` is frozen with a
 closed field list so a decision cannot be filed into the index by accident.
 
+### Where a dump goes back to
+
+`/Assets/cartdumps/<system>/<canonical name>` - `card.cartdumps_dir()`. The only
+place that path is built is `App.shelf()`, which is why the folder is the whole
+of the change: `on_card()` stats `game.path`, the copy writes to it, and
+`Game.cht_path` is that path with `.cht` appended, so the cheat file follows the
+ROM without anything being told to move it.
+
+Not `common/` because a dump landing loose among the hundreds of ROMs already
+there is findable only by date - which is how the first version of this lost 33
+of them in plain sight, on a card where the user could not find a single one.
+
+One folder at the top of `Assets` and not one under each system, because **the
+Pocket's file browser is rooted at `/Assets` and filters by the data slot's
+extensions**. The `Back` entry at the top of the browser walks up to `Assets`
+itself, so every core reaches the same directory; the GB core browsing here
+shows `[Cartridge]: GB, GBC files`, from the slot in `Cores/kroy.GB/data.json`.
+This was first written the other way round, asserting that a core could not
+leave its own tree. That was never checked and was wrong.
+
+The cost is real and accepted: `Card.scan()` walks `/Assets/<pid>`, so it does
+not see these, and a copied-back dump is not listed under its system. It does
+not need to be. It is listed under **Cartridge dumps**, `on_card()` stats the
+path directly, and `show_shelf()` reads each `.cht` rather than asking a scan
+whether one exists.
+
 ### Nothing bulk, and no state without an exit
 
 The window is a list. Tick rows, press the button that names what happens.
