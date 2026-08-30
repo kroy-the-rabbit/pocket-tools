@@ -426,31 +426,63 @@ Color only.
 
 ---
 
-# PC Engine / TurboGrafx-16 came last
+# PC Engine / TurboGrafx-16
 
 The core is released and verified working, so a file written for a PC Engine
-game takes effect like any other. Two things about this system still differ from
-the rest:
+game takes effect like any other, and the overlay names the enabled cheats over
+the picture the same way the Game Boy cores do.
 
-* **The codes are read, not carried.** Every published PC Engine cheat is a RAM
-  poke, and this app decodes all 397 files in the libretro directory, both of
-  the two shapes they come in. What you tick is what gets written, in the same
-  form the database already uses.
-* **There is no code store meter here yet.** The core does fix a store size,
-  32 codes, and stops committing beyond it, so a meter is buildable and simply
-  is not built. Until it is, a selection over 32 codes is truncated by the core
-  without this app saying so.
-
-Three things are deliberately absent, and none of them is an oversight:
-
-* **SuperGrafx.** `.sgx` files are not listed. The core drops SuperGrafx to buy
-  the room its cheat engine needs, so those ROMs will not run correctly on it.
-* **PC Engine CD.** Not supported by the core this one forks, and not planned.
-* **Cartridges.** Unsupported until the core supports them. SD card only.
-
-[docs/CHEATGUI.md](docs/CHEATGUI.md) has the detail, including the two code
+**The codes are read, not carried.** Every published PC Engine cheat is a RAM
+poke, and this app decodes all 397 files in the libretro directory, both of the
+two shapes they come in. What you tick is what gets written, in the same form
+the database already uses. [docs/CHEATGUI.md](docs/CHEATGUI.md) has the two
 shapes and why running either through the Game Boy parser produces confident
 nonsense.
+
+**The store holds 32 codes and this app does not show you how full it is.**
+`MAX_CODES` is 32 in the core's loader and poker, and the loader stops
+committing at it. A meter is buildable and is not built, so a selection over 32
+codes is truncated on the handheld without a word from here. Until it exists,
+count them yourself on a long list.
+
+## SuperGrafx is the price of the cheat engine
+
+`.sgx` files are not listed, and that is a trade rather than a gap. The cheat
+engine is built out of the room SuperGrafx was using: the fork sets `SGX_EN` to
+0, which frees the second VDC, its VRAM and the VPC, and the design lands near
+50 % logic and block RAM as a result. A SuperGrafx ROM will not run correctly on
+a core that no longer has the hardware, so offering to write cheats for one
+would be a lie.
+
+Nothing is lost by keeping both. agg23's core installs beside this one and
+plays SuperGrafx; this one plays everything else and applies cheats. The same is
+true of the libretro SuperGrafx directory, which is deliberately not mapped.
+
+## PC Engine CD is being researched, not dismissed
+
+The CD RTL is inherited and compiles in every build, `cd.vhd`, `SCSI.vhd`,
+`SCSI_FIFO.vhd`, `CDDA_FIFO.vhd` and `MSM5205.vhd`, and it costs zero logic
+because it is held disabled in three places rather than deleted.
+
+What makes it a project rather than a switch is where MiSTer expects the work to
+happen. Its CD block assumes a host processor running Linux to parse the cue
+sheet, seek the image and feed it sectors. The Pocket has no such processor.
+One core has closed that gap, [Mazamars312's PC Engine
+CD](https://github.com/Mazamars312/openfpga-pcengine-cd), and its manifest shows
+the price: deferred cue and bin slots, a newer APF framework than this core
+targets, a System Card BIOS you supply, and a 64 KB soft MPU standing in for the
+host.
+
+So the open question is not whether CD can work on a Pocket, it is which side to
+build from. Adding cheats to a core that already does CD is very likely cheaper
+than adding CD to a core that already does cheats, because the CD subsystem is
+the expensive half and it already exists over there. That is the direction being
+looked at.
+
+## Cartridges
+
+Not supported. The Pocket's TurboGrafx adapter exists, but this core has no
+cartridge path, so cheats here are for ROMs on the card.
 
 ---
 
