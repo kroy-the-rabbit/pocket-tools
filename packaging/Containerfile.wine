@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Wine, for smoke testing the Windows build without a Windows machine and
+# without installing Wine on the host.
+#
+# This proves the exe starts, loads its bundled Python and Tk, opens its window
+# and reads a card. It is not a substitute for running it on Windows: Wine is
+# not Windows, and the things most likely to differ here are exactly the
+# platform specific paths this app has, drive-letter enumeration and the shell
+# Eject verb.
+FROM fedora:44
+
+RUN dnf install -y --setopt=install_weak_deps=False \
+        wine \
+        xorg-x11-server-Xvfb \
+        ImageMagick \
+        procps-ng \
+    && dnf clean all
+
+# A prefix baked into the image, so a run does not spend a minute building one
+# and so nothing is written to a mounted directory.
+ENV WINEPREFIX=/wine \
+    WINEDEBUG=-all \
+    WINEDLLOVERRIDES=mscoree,mshtml=
+# The lock file Xvfb leaves behind gets committed into the layer, and then at
+# run time Xvfb refuses to start because "a server is already active" for a
+# display that died with the build. Wine then runs with no display at all and
+# the smoke test passes on a process that never drew anything, which is the
+# worst possible outcome for a test whose whole job is to say whether it did.
+RUN Xvfb :99 -screen 0 1600x900x24 & \
+    sleep 2 && DISPLAY=:99 wineboot --init && \
+    sleep 5 && DISPLAY=:99 wineserver -w || true; \
+    rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
+
+COPY wine-smoke.sh /usr/local/bin/wine-smoke
+RUN chmod +x /usr/local/bin/wine-smoke
+ENTRYPOINT ["/usr/local/bin/wine-smoke"]

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# localcht.py from the GUI's venv, so nothing runs against the host Python.
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+VENV="$HERE/../cheatgui/.venv"
+[[ -x "$VENV/bin/python" ]] || "$HERE/../cheatgui/run.sh" --list >/dev/null 2>&1 || true
+exec "$VENV/bin/python" "$HERE/localcht.py" "$@"

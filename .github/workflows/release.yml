@@ -1,0 +1,350 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Builds the picker for Linux, macOS and Windows on a tag, signs the result and
+# attaches it to the release.
+#
+# Signing here means GPG detached signatures over the artifacts and over the
+# checksum manifest, verified against the public key in KEYS at the root of
+# this repository. That is the only signature on the Linux and Windows builds,
+# and it is what docs/INSTALL.md tells people to check.
+#
+# macOS is NOT notarized and carries no Developer ID. The .app is ad-hoc
+# signed, which is the minimum Apple Silicon needs to run a binary at all, but
+# Gatekeeper will still refuse it on first launch; docs/INSTALL.md says how to
+# get past that. The workflow picks up a real Developer ID and notarizes with
+# it the moment the secrets exist, so nothing here has to change when they do.
+#
+# Signing is skipped, not failed, when the secrets are absent, so a fork can
+# cut a release without them.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: "3.13"
+  RELEASE_BRANCH: main
+
+jobs:
+  # A tag fires this workflow wherever it was made: `on: push: tags` has no
+  # branch filter and GitHub offers none, so tagging a scratch branch would
+  # otherwise publish it as a release. This proves the tagged commit is on the
+  # release branch before anything else runs.
+  #
+  # Its own job rather than a step inside the build, so the refusal costs
+  # seconds instead of failing after three runners have built and signed.
+  #
+  # The branch is named in env rather than written into the check, because it
+  # has moved once already: all three repositories are on main now.
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      # Full history: the ancestry test needs the branch and the tag in the
+      # same clone, and a shallow one has neither.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Releases come from ${{ env.RELEASE_BRANCH }}
+        run: |
+          git fetch --no-tags origin "$RELEASE_BRANCH"
+          if git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "$GITHUB_REF_NAME is on $RELEASE_BRANCH"
+          else
+            echo "::error::${GITHUB_REF_NAME} is not on ${RELEASE_BRANCH}." \
+                 "Releases are built from that branch only; merge it first" \
+                 "and tag the merge."
+            exit 1
+          fi
+
+  build:
+    needs: guard
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 22.04 rather than latest: the bootloader links against the runner's
+          # glibc, and building on 24.04 produces a binary that will not start
+          # on anything older.
+          - runner: ubuntu-22.04
+            os: linux
+            arch: x86_64
+          # Apple Silicon only. The macos-13 Intel runners are gone, and an
+          # Intel build is not worth keeping a second macOS job alive for.
+          - runner: macos-14
+            os: macos
+            arch: arm64
+          - runner: windows-latest
+            os: windows
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Tk, where it is not already there
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-tk tk
+
+      - name: Work out the version
+        id: v
+        shell: bash
+        run: |
+          ref="${GITHUB_REF_NAME}"
+          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp the version into the build
+        shell: bash
+        run: |
+          python - "${{ steps.v.outputs.version }}" <<'PY'
+          import pathlib, sys
+          p = pathlib.Path("cheatgui/version.py")
+          s = p.read_text()
+          old = 'VERSION = "0.0.0-dev"'
+          assert s.count(old) == 1, "version.py no longer says what it did"
+          p.write_text(s.replace(old, f'VERSION = "{sys.argv[1]}"'))
+          PY
+          grep -n '^VERSION' cheatgui/version.py
+
+      - name: Build the macOS icon from the committed iconset
+        if: matrix.os == 'macos'
+        run: |
+          # iconutil ships with macOS and is the only thing that writes a real
+          # .icns; ImageMagick will write a PNG under that name instead. The
+          # PNGs it needs are committed, so no renderer is required here.
+          iconutil -c icns assets/icon.iconset -o assets/icon.icns
+          file assets/icon.icns
+
+      - run: pip install pyinstaller certifi
+
+      - name: Build
+        shell: bash
+        env:
+          POCKET_CHEATS_VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          pyinstaller --clean --noconfirm \
+            --distpath dist --workpath build/pyi packaging/pocket-tools.spec
+          ls -l dist/
+
+      # -------------------------------------------------------------- macOS --
+      - name: Is there a Developer ID to sign with?
+        if: matrix.os == 'macos'
+        id: mac_signing
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          PASS: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          KEY: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          if [ -n "$CERT" ] && [ -n "$PASS" ] && [ -n "$TEAM" ] && \
+             [ -n "$KEY" ] && [ -n "$KEY_ID" ] && [ -n "$ISSUER" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Apple signing secrets; the macOS build will be ad-hoc signed and not notarized."
+          fi
+
+      - name: Import the Developer ID certificate
+        if: matrix.os == 'macos' && steps.mac_signing.outputs.enabled == 'true'
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          PASS: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          echo "$CERT" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$PASS" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          echo "SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+      - name: Sign the app
+        if: matrix.os == 'macos'
+        shell: bash
+        run: |
+          APP="dist/Pocket Tools.app"
+          test -d "$APP"
+          if [ "${{ steps.mac_signing.outputs.enabled }}" = "true" ]; then
+            IDENTITY=$(security find-identity -v -p codesigning \
+              "$SIGNING_KEYCHAIN" \
+              | sed -n 's/.*"\(Developer ID Application:.*\)".*/\1/p' | head -1)
+            [ -n "$IDENTITY" ] || { echo "no Developer ID in the keychain"; exit 1; }
+            codesign --force --deep --options runtime --timestamp \
+              --sign "$IDENTITY" "$APP"
+            codesign --verify --deep --strict --verbose=2 "$APP"
+          else
+            # Ad-hoc. Apple Silicon refuses to run an unsigned binary at all,
+            # so this is the difference between "Gatekeeper warns" and "the app
+            # is killed on launch". It is not a trust signature.
+            codesign --force --deep --sign - "$APP"
+            codesign --verify --deep --verbose "$APP" || true
+          fi
+
+      - name: Notarize
+        if: matrix.os == 'macos' && steps.mac_signing.outputs.enabled == 'true'
+        env:
+          KEY: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          APP="dist/Pocket Tools.app"
+          ZIP="$RUNNER_TEMP/notarize.zip"
+          ditto -c -k --keepParent "$APP" "$ZIP"
+          P8="$RUNNER_TEMP/AuthKey_${KEY_ID}.p8"
+          echo "$KEY" | base64 --decode > "$P8"
+          xcrun notarytool submit "$ZIP" --key "$P8" --key-id "$KEY_ID" \
+            --issuer "$ISSUER" --wait
+          xcrun stapler staple "$APP"
+
+      # ------------------------------------------------------------- naming --
+      - name: Name the artifact
+        id: name
+        shell: bash
+        env:
+          V: ${{ steps.v.outputs.version }}
+        run: |
+          mkdir -p out
+          base="pocket-tools-${V}-${{ matrix.os }}-${{ matrix.arch }}"
+          case "${{ matrix.os }}" in
+            linux)
+              mv dist/pocket-tools "out/${base}"
+              chmod +x "out/${base}"
+              ;;
+            windows)
+              mv dist/pocket-tools.exe "out/${base}.exe"
+              ;;
+            macos)
+              # A zip, because a .app is a directory and a release asset is a
+              # file. ditto keeps the bundle's symlinks and signature intact,
+              # which a plain zip does not.
+              ditto -c -k --keepParent "dist/Pocket Tools.app" "out/${base}.zip"
+              ;;
+          esac
+          ls -l out/
+          echo "base=${base}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.os }}-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    # workflow_dispatch builds the matrix so a change here can be tested, but
+    # there is no tag to attach anything to and nothing to publish.
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+
+      - name: Collect
+        run: |
+          mkdir -p artifacts
+          find staging -type f -exec mv {} artifacts/ \;
+          ls -l artifacts/
+
+      - name: Is there a key to sign with?
+        id: gpg
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+        run: |
+          if [ -n "$GPG_PRIVATE_KEY" ] && [ -n "$GPG_KEY_ID" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No GPG secrets set; the release will carry checksums but no signatures. See docs/RELEASING.md."
+          fi
+
+      - name: Import the release key
+        if: steps.gpg.outputs.enabled == 'true'
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -p "$GNUPGHOME"
+          chmod 700 "$GNUPGHOME"
+          echo "$GPG_PRIVATE_KEY" | base64 --decode | gpg --batch --import
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+
+      - name: Checksums, and signatures over them
+        env:
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          cd artifacts
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+          if [ "${{ steps.gpg.outputs.enabled }}" != "true" ]; then
+            exit 0
+          fi
+          opts=(--batch --yes --pinentry-mode loopback)
+          if [ -n "${GPG_PASSPHRASE:-}" ]; then
+            opts+=(--passphrase "$GPG_PASSPHRASE")
+          fi
+          # The manifest signature is the one that matters: it covers every
+          # artifact at once and is what docs/INSTALL.md tells people to check.
+          gpg "${opts[@]}" --local-user "$GPG_KEY_ID" --armor \
+            --detach-sign --output SHA256SUMS.asc SHA256SUMS
+          # Per-artifact signatures as well, for anyone who fetches one file.
+          for f in *; do
+            case "$f" in
+              SHA256SUMS|SHA256SUMS.asc|*.sig) continue ;;
+            esac
+            [ -f "$f" ] || continue
+            gpg "${opts[@]}" --local-user "$GPG_KEY_ID" \
+              --detach-sign --output "$f.sig" "$f"
+          done
+          gpg --verify SHA256SUMS.asc SHA256SUMS
+          ls -l
+
+      - name: Verification instructions for the release notes
+        id: notes
+        run: |
+          {
+            echo "notes<<EOF"
+            echo "### Verifying these files"
+            echo
+            echo '```sh'
+            echo "gpg --import KEYS          # from this repository"
+            echo "gpg --verify SHA256SUMS.asc SHA256SUMS"
+            echo "sha256sum -c SHA256SUMS    # shasum -a 256 -c on macOS"
+            echo '```'
+            echo
+            echo "**Use at your own risk: cheats can corrupt save files.**"
+            echo "Back up saves you care about."
+            echo
+            echo "All three builds have now been run on the platform they are"
+            echo "for. Linux and Windows have been used against a real card"
+            echo "end to end; the macOS build has been run and works."
+            echo
+            echo "The macOS build is also **not notarized**. Gatekeeper will"
+            echo "refuse it on first launch; see docs/INSTALL.md."
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          body: ${{ steps.notes.outputs.notes }}

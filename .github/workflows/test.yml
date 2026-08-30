@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The test suite, on every push. Standard library only, so there is nothing to
+# install but Python and Tk.
+#
+# The GUI tests drive the real widgets, so they need a display; xvfb provides
+# one. They exist because the bug they cover was invisible from outside the
+# window: removing a cartridge silently did nothing, and the IndexError behind
+# it went to Tk's callback log rather than to the user.
+#
+# Nothing here reaches the network. The version check the app makes on startup
+# is stubbed in the tests, so a GitHub outage cannot fail this workflow.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 is the minimum the README claims; the newest is what a packaged
+        # build ships. Both are tested so neither claim goes stale.
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Tk and a display to put it on
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-tk tk xvfb
+
+      - name: Everything compiles
+        run: python -m compileall -q cheatgui cheats tests
+
+      - name: Game Genie decoder self-test
+        run: python cheats/ggdecode.py --test
+
+      - name: GUI tests
+        run: xvfb-run -a python -m unittest discover -s tests -v
+
+  package:
+    # A build that no longer packages is a release that fails at tag time,
+    # which is the worst moment to find out.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-tk tk
+          pip install pyinstaller certifi
+      - run: |
+          pyinstaller --clean --noconfirm \
+            --distpath dist --workpath build/pyi packaging/pocket-tools.spec
+      - name: The binary runs
+        run: |
+          test -x dist/pocket-tools
+          ./dist/pocket-tools --list || true
+          ls -l dist/

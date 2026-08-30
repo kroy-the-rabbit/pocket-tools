@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!--
+  Pocket Tools.
+
+  A Game Boy cartridge, which is what this app is for: the shape is the one
+  thing every user of it already recognises, and it reads at 16px because it is
+  mostly one silhouette with a single notch. The green is the Game Boy screen
+  green; the tick is the app's whole job, choosing which cheats go on.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+     role="img" aria-label="Pocket Tools">
+  <title>Pocket Tools</title>
+
+  <!-- cartridge body, with the clipped top-right corner a GB cartridge has -->
+  <path d="M12 6h28l12 12v40a4 4 0 0 1-4 4H12a4 4 0 0 1-4-4V10a4 4 0 0 1 4-4z"
+        fill="#3b4048"/>
+  <path d="M40 6l12 12H44a4 4 0 0 1-4-4z" fill="#2b2f36"/>
+
+  <!-- label panel. Deliberately large: at 16px this and the tick on it are
+       the only things still legible, so they get the room. -->
+  <!-- Kept clear of the clipped corner: the body's right edge at this height
+       is the diagonal, not x=52, and a label drawn to 51 hangs off it. -->
+  <rect x="13" y="16" width="32" height="24" rx="2.5" fill="#9bbc0f"/>
+
+  <!-- the tick: choosing which cheats go on -->
+  <path d="M18.5 28.5l6.5 6.5L40 21" fill="none" stroke="#0f380f"
+        stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- edge connector. Three pins rather than five: more than that turns into
+       a grey smear once it is a few pixels wide. -->
+  <rect x="16" y="45" width="32" height="11" rx="1.5" fill="#1f2329"/>
+  <g fill="#c8a02c">
+    <rect x="20" y="47" width="4" height="7" rx="1"/>
+    <rect x="30" y="47" width="4" height="7" rx="1"/>
+    <rect x="40" y="47" width="4" height="7" rx="1"/>
+  </g>
+</svg>
