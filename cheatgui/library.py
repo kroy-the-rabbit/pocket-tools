@@ -91,10 +91,16 @@ CARTSAVES = "cartsaves"
 # not the thing its own docstring above claims it is.
 CHEATS = "cheats"
 
-# Created together, so a library is never half a library. CHEATS is not in
-# REQUIRED: an existing library predates it and must not read as broken for
-# missing a directory nothing had yet.
-SUBDIRS = (ROMS, CART_DUMPS, CARTSAVES, CHEATS)
+# The No-Intro DATs, for the same reason and one more: without them nothing
+# in here can be identified, so a library that does not carry them cannot
+# describe itself on another machine. They also arrive in a downloads folder,
+# which is the least durable directory on any computer.
+DATS = "dats"
+
+# Created together, so a library is never half a library. CHEATS and DATS are
+# not in REQUIRED: an existing library predates them and must not read as
+# broken for missing a directory nothing had yet.
+SUBDIRS = (ROMS, CART_DUMPS, CARTSAVES, CHEATS, DATS)
 REQUIRED = (ROMS, CART_DUMPS, CARTSAVES)
 
 INDEX = "index.json"
@@ -131,6 +137,10 @@ def cheats_dir(root: str) -> str:
     return os.path.join(root, CHEATS)
 
 
+def dats_dir(root: str) -> str:
+    return os.path.join(root, DATS)
+
+
 def inside(root: str, path: str) -> bool:
     """True if `path` is in the library, so copying the library copies it."""
     try:
@@ -141,7 +151,7 @@ def inside(root: str, path: str) -> bool:
         return False
 
 
-def take_in(root: str, path: str) -> str:
+def take_in(root: str, path: str, place: str = CHEATS) -> str:
     """Copy a cheat source into the library and hand back the copy's path.
 
     Already inside, or the same bytes already there, and nothing is written.
@@ -154,7 +164,7 @@ def take_in(root: str, path: str) -> str:
     """
     if inside(root, path):
         return path
-    folder = os.path.join(root, CHEATS)
+    folder = os.path.join(root, place)
     os.makedirs(folder, exist_ok=True)
     name = os.path.basename(path)
     dest = os.path.join(folder, name)

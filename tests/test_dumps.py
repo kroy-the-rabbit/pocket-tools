@@ -1645,3 +1645,28 @@ class ArchiveRoundTripTest(unittest.TestCase):
 
     def test_a_file_with_no_cheats_at_all_is_not_claimed(self):
         self.assertIsNone(mister.parse_cht(b"nothing here\n"))
+
+
+class RememberedDatsTest(Env):
+    """Which DATs to load is a decision, so it is remembered.
+
+    It was not, and the cost was that every run began with an empty catalog:
+    nothing on a card could be identified until somebody found the three
+    downloads again.
+    """
+
+    def test_nothing_is_remembered_to_begin_with(self):
+        self.assertEqual(self.prefs.get_dats(), [])
+
+    def test_they_come_back_in_order(self):
+        self.prefs.set_dats(["/a/gb.dat", "/a/gbc.dat"])
+        self.assertEqual(self.prefs.get_dats(), ["/a/gb.dat", "/a/gbc.dat"])
+
+    def test_the_same_one_twice_is_kept_once(self):
+        self.prefs.set_dats(["/a/gb.dat", "/a/gb.dat", "/a/gbc.dat"])
+        self.assertEqual(self.prefs.get_dats(), ["/a/gb.dat", "/a/gbc.dat"])
+
+    def test_they_can_be_forgotten(self):
+        self.prefs.set_dats(["/a/gb.dat"])
+        self.prefs.set_dats([])
+        self.assertEqual(self.prefs.get_dats(), [])

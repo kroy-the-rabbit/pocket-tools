@@ -34,6 +34,7 @@ import meter
 import model
 import nointro
 import prefs
+import say
 import reveal
 import timing
 import version
@@ -145,10 +146,13 @@ class App(ttk.Frame):
         # thread would freeze the window in a way that is indistinguishable
         # from a crash. Its own runner so it cannot queue behind the database.
         self.dumpjob = work.Job(master)
-        # The No-Intro data, for as long as the app is up. There is nowhere to
-        # remember it: a DAT is the user's own download, the app never copies
-        # one, and prefs holds decisions rather than files. So it is loaded
-        # from the dumps window and lives until the window is closed.
+        # The No-Intro data. Which DATs to use is a decision, so prefs
+        # remembers them and the library keeps a copy; reload_dats() fills
+        # this in at every start. It used to live only as long as the window,
+        # on the reasoning that a DAT is somebody's own download and the app
+        # never copies one. The app copies things now, and the cost of not
+        # remembering was a run that could identify nothing until the three
+        # files had been found again.
         self.catalog = nointro.Catalog()
         self.ready: dict[str, list[int]] = {}   # platform id -> cheat counts
         self.shelf_sizes: dict[str, int] = {}  # imported dump name -> its size
@@ -167,6 +171,9 @@ class App(ttk.Frame):
         self.view: model.GameView | None = None
 
         self._build()
+        # Before the card scan finishes, so the dumps window can never be
+        # opened against an empty catalogue.
+        self.reload_dats()
         self.rescan()
         self.check_db()
         self.check_core()
@@ -457,7 +464,9 @@ class App(ttk.Frame):
         # for, because the dumper writes into /Assets and nothing else in this
         # window ever mentions that directory. Counted, not surveyed: this runs
         # on every scan and a survey hashes every byte of a 32 MB cartridge.
-        self.waiting = dumps.waiting(self.card.root)
+        root = library.path()
+        self.waiting = dumps.waiting(
+            self.card.root, root, library.load(root) if root else None)
         self.show_waiting()
         for i, p in enumerate(self.platforms):
             # Blank rather than 0 until the system has been read: nobody has
@@ -520,6 +529,42 @@ class App(ttk.Frame):
         self.card_label.config(text="card unmounted, safe to remove",
                                foreground="#060")
         self.status.config(text=str(message), foreground="#060")
+
+    # -------------------------------------------------------------- No-Intro --
+    def reload_dats(self) -> None:
+        """Put the remembered DATs back into the catalog. Synchronous.
+
+        Loaded into the catalog this window already holds rather than into a
+        fresh one that replaces it. Every window that reads the catalog is
+        handed the object, not asked for it again, so replacing it leaves the
+        dumps window looking at the empty catalogue it captured earlier.
+
+        On the Tk thread because the whole job is 0.3 s: all three DATs,
+        measured. The first version of this put it on a background runner
+        against a guess that tens of megabytes of XML would freeze the window.
+        That guess cost the wrong runner API, which raised on every start, and
+        a race for nothing.
+
+        A path that has gone is dropped from the list rather than reported:
+        the file was somebody's download, it is allowed to disappear, and the
+        dumps window already says which systems are missing.
+        """
+        want = [p for p in prefs.get_dats() if os.path.exists(p)]
+        if not want:
+            if prefs.get_dats():
+                prefs.set_dats([])       # every one of them has gone
+            return
+        kept = []
+        for path in want:
+            try:
+                if self.catalog.take(path):
+                    kept.append(path)
+                else:
+                    say.err(f"{os.path.basename(path)} could not be read")
+            except Exception as e:                           # noqa: BLE001
+                say.err(f"{os.path.basename(path)}: {e}")
+        if kept != prefs.get_dats():
+            prefs.set_dats(kept)
 
     # -------------------------------------------------------------- database --
     def check_db(self) -> None:
@@ -2410,6 +2455,9 @@ class DumpsDialog(tk.Toplevel):
         # is on the card: the bytes of a dump do not move because it was imported.
         self.found = list(dumps.scan(card_root) if found is None else found)
         self.proposals: dict[str, dumps.Proposal] = {}
+        # Saves with no dump of their own on the card, keyed by path like the
+        # proposals are, so one tick set covers both kinds of row.
+        self.stray: dict[str, tuple] = {}
         self.index: library.Index | None = None
         self.title("Cartridge dumps")
         self.transient(app)
@@ -2507,6 +2555,7 @@ class DumpsDialog(tk.Toplevel):
         keep = self.ticked() if keep is None else keep
         self.tree.delete(*self.tree.get_children())
         self.proposals.clear()
+        self.stray.clear()
         root = self.root_dir()
         index = library.load(root) if root else None
         # Held for save_cell(), which is called once per row and must not
@@ -2538,6 +2587,23 @@ class DumpsDialog(tk.Toplevel):
                                      self.save_cell(prop),
                                      self.cheat_of(prop).name or "-"),
                              tags=(tag,))
+        # Saves whose cartridge is imported but whose own bytes are not. They
+        # have no dump on the card to hang off -- clearing the ROM is the
+        # ordinary end of importing one -- so without a row of their own they
+        # are unreachable, and the line on the main window telling you to come
+        # here to import them is a lie.
+        for save, row, held in (dumps.matched_card_saves(self.card_root, root,
+                                                          index)
+                                if root and index else []):
+            self.stray[save.path] = (save, row)
+            tick = TICK if save.path in keep else UNTICK
+            state = "duplicate" if held else "save to import"
+            self.tree.insert("", "end", iid=save.path,
+                             text=f"{tick} {save.name}",
+                             values=(state, row.rom or "",
+                                     f"{save.size:,} bytes", "-"),
+                             tags=("ready",))
+
         rows = list(self.tree.get_children())
         if rows and not self.tree.selection():
             self.tree.selection_set(rows[0])
@@ -2636,8 +2702,13 @@ class DumpsDialog(tk.Toplevel):
     def tick_all(self, on: bool) -> None:
         """Tick everything a button could act on, or nothing."""
         for iid in self.tree.get_children():
-            prop = self.proposals[iid]
-            worth = prop.actionable or self.clearable(prop)
+            prop = self.proposals.get(iid)
+            if prop is None:
+                # A save row. Always worth acting on: it is either an import
+                # or, once the library holds it, a clear.
+                worth = iid in self.stray
+            else:
+                worth = prop.actionable or self.clearable(prop)
             text = self.tree.item(iid, "text")
             want = TICK if (on and worth) else UNTICK
             self.tree.item(iid, text=want + text[1:])
@@ -2648,8 +2719,21 @@ class DumpsDialog(tk.Toplevel):
                 if str(self.tree.item(i, "text")).startswith(TICK)}
 
     def chosen(self, test) -> list:
+        """The ticked dumps a test accepts.
+
+        Rows that are not dumps are skipped rather than indexed. The tree
+        also holds save rows, whose iids are not in `proposals`, and looking
+        one up here raised a KeyError that killed the whole button refresh:
+        every button kept whatever state it last had, so ticking a save did
+        nothing visible at all.
+        """
         return [self.proposals[i] for i in sorted(self.ticked())
-                if test(self.proposals[i])]
+                if i in self.proposals and test(self.proposals[i])]
+
+    def strays(self) -> list:
+        """The ticked save rows, as (Save, Row)."""
+        return [self.stray[i] for i in sorted(self.ticked())
+                if i in self.stray]
 
     def picked(self) -> dumps.Proposal | None:
         sel = self.tree.selection()
@@ -2657,9 +2741,18 @@ class DumpsDialog(tk.Toplevel):
 
     def on_pick(self, _evt=None) -> None:
         prop = self.picked()
-        self.detail.config(text=self.describe(prop) if prop else "")
-        addable = len(self.chosen(lambda p: p.actionable))
-        clearing = len(self.chosen(self.clearable))
+        sel = self.tree.selection()
+        if sel and sel[0] in self.stray:
+            self.detail.config(text=self.describe_save(*self.stray[sel[0]]))
+        else:
+            self.detail.config(text=self.describe(prop) if prop else "")
+        saves = self.strays()
+        addable = len(self.chosen(lambda p: p.actionable)) + sum(
+            1 for sv, row in saves
+            if not dumps.same_saved_bytes(sv, self.root_dir(), row))
+        clearing = len(self.chosen(self.clearable)) + sum(
+            1 for sv, row in saves
+            if dumps.same_saved_bytes(sv, self.root_dir(), row))
         refusing = len(self.chosen(
             lambda p: p.verdict is not dumps.Verdict.REJECTED))
         rejected = len(self.chosen(
@@ -2694,6 +2787,20 @@ class DumpsDialog(tk.Toplevel):
         if prop is None or prop.row is None or not root:
             return
         SavesDialog(self.app, root, prop.row)
+
+    def describe_save(self, save, row) -> str:
+        """The detail line for a save with no dump of its own on the card."""
+        held = dumps.same_saved_bytes(save, self.root_dir(), row)
+        lines = [f"{save.name}   {save.size:,} bytes"]
+        lines.append(f"The save the dumper read off {row.rom}.")
+        if held:
+            lines.append("The library already holds these bytes, so the file "
+                         "on the card is a second copy and Clear from card "
+                         "deletes it.")
+        else:
+            lines.append("Not in the library yet. Add to library keeps it as "
+                         "a dated read, and does not touch the card.")
+        return "\n".join(textwrap.fill(x, 100) for x in lines)
 
     def describe(self, prop: dumps.Proposal) -> str:
         d = prop.dump
@@ -2743,9 +2850,18 @@ class DumpsDialog(tk.Toplevel):
         """Add every ticked dump to the library, and say what happened."""
         root = self.root_dir()
         todo = self.chosen(lambda p: p.actionable)
-        if not root or not todo:
+        saves = self.strays()
+        if not root or not (todo or saves):
             return
         added, failed, cleared = 0, [], []
+        for save, row in saves:
+            if dumps.same_saved_bytes(save, root, row):
+                continue        # already held; ticking it means "clear it"
+            path, why = dumps.import_cartridge_save(save, row, root)
+            if path:
+                added += 1
+            else:
+                failed.append(f"{save.name}: {why}")
         for prop in todo:
             choice = dumps.Choice.KEEP_BOTH
             if prop.collides:
@@ -2772,18 +2888,36 @@ class DumpsDialog(tk.Toplevel):
         file. This is the only destructive thing in the window.
         """
         todo = self.chosen(self.clearable)
-        if not todo:
+        # A save is clearable on the same terms as a dump: the library holds
+        # these exact bytes, so the file on the card is the second copy.
+        saves = [(sv, row) for sv, row in self.strays()
+                 if dumps.same_saved_bytes(sv, self.root_dir(), row)]
+        if not (todo or saves):
             return
-        names = "\n".join(p.dump.name for p in todo[:12])
-        more = f"\nand {len(todo) - 12} more" if len(todo) > 12 else ""
+        every = [p.dump.name for p in todo] + [sv.name for sv, _ in saves]
+        names = "\n".join(every[:12])
+        more = f"\nand {len(every) - 12} more" if len(every) > 12 else ""
         if not messagebox.askyesno(
                 "Clear from card",
-                f"Delete {len(todo)} file{'' if len(todo) == 1 else 's'} from "
+                f"Delete {len(every)} file{'' if len(every) == 1 else 's'} from "
                 f"the card?\n\n{names}{more}\n\nThe library already holds each "
                 "of these, and every one is compared byte for byte before it "
                 "goes.", parent=self):
             return
         gone, failed = 0, []
+        for sv, row in saves:
+            kept = dumps.same_saved_bytes(sv, self.root_dir(), row)
+            if not kept:
+                failed.append(f"{sv.name}: the library copy could not be found")
+                continue
+            if not dumps.same_bytes(sv.path, kept):
+                failed.append(f"{sv.name}: does not match the library copy")
+                continue
+            try:
+                os.remove(sv.path)
+                gone += 1
+            except OSError as e:
+                failed.append(f"{sv.name}: {e}")
         for prop in todo:
             kept = prop.row.dump_path(self.root_dir())
             done = dumps.remove_from_card(
@@ -3473,6 +3607,7 @@ class DatDialog(tk.Toplevel):
                 bad.append(os.path.basename(path))
             else:
                 self.loaded = True
+                self.keep(path)
         self.refill()
         if bad:
             messagebox.showwarning(
@@ -3480,6 +3615,22 @@ class DatDialog(tk.Toplevel):
                 "These could not be read:\n\n" + "\n".join(bad))
         else:
             self.destroy()
+
+    def keep(self, path: str) -> None:
+        """Copy a loaded DAT into the library and remember it for next time.
+
+        Both halves matter. Remembering alone would point at a downloads
+        folder, which is the least durable directory on any computer; copying
+        alone would still leave the catalog empty at the next start.
+        """
+        root = library.path()
+        if root:
+            try:
+                path = library.take_in(root, path, library.DATS)
+            except OSError as e:
+                say.err(f"could not copy {os.path.basename(path)} "
+                        f"into the library: {e}")
+        prefs.set_dats(prefs.get_dats() + [path])
 
     def browse(self) -> None:
         """One file from anywhere, through the desktop's own chooser."""
@@ -3492,6 +3643,7 @@ class DatDialog(tk.Toplevel):
                                    DumpsDialog.why(dat, path))
         else:
             self.loaded = True
+            self.keep(path)
         self.refill()
 
     def get(self) -> None:

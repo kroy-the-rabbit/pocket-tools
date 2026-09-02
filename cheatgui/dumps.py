@@ -381,13 +381,23 @@ class Waiting:
     """
     dumps: int = 0
     saves: int = 0
+    # How many of those saves the library does not hold. None when nobody
+    # asked, which is not the same as zero and must not read as "all done".
+    new_saves: int | None = None
 
     @property
     def any(self) -> bool:
         return bool(self.dumps or self.saves)
 
     def note(self) -> str:
-        """One line for the main window, or "" when the card carries nothing."""
+        """One line for the main window, or "" when the card carries nothing.
+
+        It used to end "to import them" whatever the state was, so a card
+        whose every save was already in the library still read as a card with
+        work on it. Dumps are still only counted, because hashing a shelf of
+        32 MB ROMs on every scan is the half minute this line exists to avoid;
+        saves are small enough to answer properly.
+        """
         if not self.any:
             return ""
         parts = []
@@ -396,12 +406,23 @@ class Waiting:
                          f"{'s' if self.dumps > 1 else ''}")
         if self.saves:
             parts.append(f"{self.saves} save{'s' if self.saves > 1 else ''}")
-        return (" and ".join(parts)
-                + " on the card. Cartridge dumps... to import them.")
+        line = " and ".join(parts) + " on the card."
+        if self.dumps or self.new_saves is None:
+            return line + " Cartridge dumps... to import them."
+        if self.new_saves:
+            return (f"{line} {self.new_saves} not in the library yet. "
+                    "Cartridge dumps... to import them.")
+        return line + " All of them are in the library already."
 
 
-def waiting(card_root: str) -> Waiting:
-    """Count what is in the core's output directory. Reads no file contents."""
+def waiting(card_root: str, root: str = "",
+            index: "library.Index | None" = None) -> Waiting:
+    """Count what is in the core's output directory.
+
+    Reads no ROM. With a library it also hashes the saves, which are a few
+    kilobytes each and worth reading so the line can say whether any of them
+    is actually work.
+    """
     base = dump_dir(card_root)
     try:
         names = sorted(os.listdir(base))
@@ -417,7 +438,12 @@ def waiting(card_root: str) -> Waiting:
             saves += 1
         elif is_dump(name):
             dumps += 1
-    return Waiting(dumps=dumps, saves=saves)
+    new = None
+    if root and index is not None:
+        new = sum(1 for sv, row, held in matched_card_saves(card_root, root,
+                                                            index)
+                  if not held)
+    return Waiting(dumps=dumps, saves=saves, new_saves=new)
 
 
 # -------------------------------------------------------- prong 2: identify --
@@ -873,6 +899,27 @@ def unseen_cartridge_saves(card_root: str, root: str,
     return out
 
 
+def matched_card_saves(card_root: str, root: str,
+                       index: library.Index) -> list[tuple[Save, library.Row, str]]:
+    """Every save on the card that belongs to an imported dump.
+
+    (save, its dump's row, the library copy of these bytes or "").
+
+    All of them, not only the ones the library has never seen. A save whose
+    bytes are held is still on the card and still worth a row, for exactly
+    the reason a duplicate dump is: that row is the only place the card copy
+    can be cleared from. Listing only the unseen ones made a save vanish the
+    moment it was imported, leaving the file on the card and no way to reach
+    it.
+    """
+    out = []
+    for save in scan_saves(card_root):
+        row = match_save(save, index)
+        if row is not None:
+            out.append((save, row, same_saved_bytes(save, root, row)))
+    return out
+
+
 def import_cartridge_save(save: Save, row: library.Row,
                           root: str) -> tuple[str, str]:
     """Keep one save the dumper wrote. (path, problem)."""
@@ -1300,6 +1347,31 @@ def forget_dump(root: str, row: library.Row,
     index.drop(row.sha1)
     library.save(root, index)
     return problems
+
+
+def same_saved_bytes(save: Save, root: str,
+                     row: library.Row) -> str:
+    """The library's copy of this save's bytes, or "" if it holds none.
+
+    Named rather than searched: only this cartridge's own reads are looked
+    at, so a delete can never be justified by some other game's file that
+    happens to hash the same.
+    """
+    if not row.rom:
+        return ""
+    try:
+        want = library.sha1_of(save.path)
+    except OSError:
+        return ""
+    folder = library.cartsave_dir(root, row.rom)
+    for name in library.cartsave_reads(root, row.rom):
+        path = os.path.join(folder, name)
+        try:
+            if library.sha1_of(path) == want:
+                return path
+        except OSError:
+            continue
+    return ""
 
 
 def same_bytes(a: str, b: str) -> bool:

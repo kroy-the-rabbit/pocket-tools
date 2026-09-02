@@ -86,6 +86,30 @@ def set_rejected(sha1: str, when: str | None) -> None:
     _save(data)
 
 
+def get_dats() -> list:
+    """The No-Intro DATs to load at startup, in the order they were added.
+
+    Remembered because loading them was a per-session chore: the catalog is
+    built in memory and nothing wrote down which files went into it, so every
+    run began with nothing identifiable and every dump came back UNIDENTIFIED
+    until somebody went and found the three files again.
+    """
+    got = _load().get("dats", [])
+    return [p for p in got if isinstance(p, str)]
+
+
+def set_dats(paths: list) -> None:
+    """Remember the DATs, in order, with duplicates dropped."""
+    data = _load()
+    seen, out = set(), []
+    for p in paths:
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+    data["dats"] = out
+    _save(data)
+
+
 def all_sources() -> dict:
     """Every pinned cheat source, keyed as they are stored."""
     return dict(_load().get("sources", {}))

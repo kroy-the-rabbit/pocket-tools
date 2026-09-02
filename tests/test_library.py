@@ -80,8 +80,9 @@ class ChoiceTest(Env):
 class LayoutTest(Env):
     def test_the_layout_is_the_one_the_plan_fixed(self):
         """Pinned because importing dumps into a different shape is a migration."""
-        self.assertEqual(self.lib.SUBDIRS,
-                         ("roms", "cart-dumps", "cartsaves", "cheats"))
+        self.assertEqual(
+            self.lib.SUBDIRS,
+            ("roms", "cart-dumps", "cartsaves", "cheats", "dats"))
         # cheats/ is made but not required: a library predating it is old,
         # not broken.
         self.assertEqual(self.lib.REQUIRED,
@@ -482,3 +483,35 @@ class CheatsDirTest(Env):
         src = self.outside("Metroid - Zero Mission (USA).zip", b"PK\x05\x06" + b"\x00" * 18)
         got = self.lib.take_in(self.root, src)
         self.assertEqual(os.path.dirname(got), self.lib.cheats_dir(self.root))
+
+
+class DatsDirTest(Env):
+    """The No-Intro DATs live in the library too, and for one more reason.
+
+    Without them nothing in the library can be identified, so a library that
+    does not carry them cannot describe itself on another machine.
+    """
+
+    def test_a_dat_is_taken_into_its_own_directory(self):
+        self.lib.create(self.root)
+        d = os.path.join(self.tmp.name, "Downloads")
+        os.makedirs(d, exist_ok=True)
+        src = os.path.join(d, "Nintendo - Game Boy.dat")
+        with open(src, "wb") as f:
+            f.write(b"<datafile/>")
+        got = self.lib.take_in(self.root, src, self.lib.DATS)
+        self.assertEqual(os.path.dirname(got), self.lib.dats_dir(self.root))
+        self.assertTrue(os.path.exists(src), "the download is left alone")
+
+    def test_cheats_is_still_the_default_destination(self):
+        self.lib.create(self.root)
+        src = os.path.join(self.tmp.name, "x.cht")
+        with open(src, "wb") as f:
+            f.write(b"cheats = 0\n")
+        got = self.lib.take_in(self.root, src)
+        self.assertEqual(os.path.dirname(got), self.lib.cheats_dir(self.root))
+
+    def test_a_library_without_dats_is_still_ready(self):
+        self.lib.create(self.root)
+        os.rmdir(self.lib.dats_dir(self.root))
+        self.assertTrue(self.lib.ready(self.root))
