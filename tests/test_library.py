@@ -79,8 +79,13 @@ class ChoiceTest(Env):
 # ---------------------------------------------------------------- the layout --
 class LayoutTest(Env):
     def test_the_layout_is_the_one_the_plan_fixed(self):
-        """Pinned because filing dumps into a different shape is a migration."""
-        self.assertEqual(self.lib.SUBDIRS, ("roms", "cart-dumps", "saves"))
+        """Pinned because importing dumps into a different shape is a migration."""
+        self.assertEqual(self.lib.SUBDIRS,
+                         ("roms", "cart-dumps", "cartsaves", "cheats"))
+        # cheats/ is made but not required: a library predating it is old,
+        # not broken.
+        self.assertEqual(self.lib.REQUIRED,
+                         ("roms", "cart-dumps", "cartsaves"))
         self.assertEqual(self.lib.INDEX, "index.json")
 
     def test_creating_makes_every_directory(self):
@@ -98,7 +103,7 @@ class LayoutTest(Env):
 
     def test_a_missing_directory_means_the_library_is_not_ready(self):
         self.lib.create(self.root)
-        os.rmdir(self.lib.saves_dir(self.root))
+        os.rmdir(self.lib.cartsaves_dir(self.root))
         self.assertFalse(self.lib.ready(self.root))
 
     def test_there_are_no_per_system_directories(self):
@@ -109,13 +114,13 @@ class LayoutTest(Env):
             self.assertFalse(os.path.isdir(
                 os.path.join(self.lib.roms_dir(self.root), pid)))
 
-    def test_saves_is_made_and_then_left_alone(self):
-        """Named now so nothing above it moves later. Nothing writes in it."""
+    def test_cartsaves_is_made_and_stays_empty_without_a_save(self):
+        """Importing a dump with no save must not invent a directory for it."""
         self.lib.create(self.root)
         self.write("roms", "Zelda (USA).gb", b"bytes")
         self.write("cart-dumps", "ZELDA.gb", b"bytes")
         self.lib.save(self.root, self.lib.rebuild(self.root))
-        self.assertEqual(os.listdir(self.lib.saves_dir(self.root)), [])
+        self.assertEqual(os.listdir(self.lib.cartsaves_dir(self.root)), [])
 
     def test_the_index_lives_in_the_library_not_with_the_config(self):
         """Copying the library has to copy its index, so it travels with it."""
@@ -148,7 +153,7 @@ class HashTest(Env):
 # ----------------------------------------------------------------- the store --
 class IndexTest(Env):
     def row(self, sha1: str = "a" * 40, **kw) -> "object":
-        fields = dict(sha1=sha1, size=64, crc32="deadbeef", filed="2026-08-21")
+        fields = dict(sha1=sha1, size=64, crc32="deadbeef", imported="2026-08-21")
         fields.update(kw)
         return self.lib.Row(**fields)
 
@@ -170,7 +175,7 @@ class IndexTest(Env):
         self.assertEqual(row.region, "USA")
         self.assertEqual(row.size, 64)
         self.assertEqual(row.crc32, "deadbeef")
-        self.assertEqual(row.filed, "2026-08-21")
+        self.assertEqual(row.imported, "2026-08-21")
 
     def test_rows_are_keyed_by_sha1_and_not_by_name(self):
         """Two cartridges both titling themselves ZELDA are two rows."""
@@ -246,7 +251,7 @@ class AtomicTest(Env):
         self.lib.create(self.root)
         index = self.lib.Index()
         index.put(self.lib.Row(sha1="a" * 40, size=64, crc32="deadbeef",
-                               filed="2026-08-21", rom="Zelda (USA).gb"))
+                               imported="2026-08-21", rom="Zelda (USA).gb"))
         self.lib.save(self.root, index)
 
         with open(self.lib.index_path(self.root) + ".tmp", "w") as f:
@@ -351,10 +356,18 @@ class RebuildTest(Env):
         self.assertEqual(sorted(r.rom for r in index),
                          ["Zelda (USA).gb", "Zelda DX (USA).gbc"])
 
-    def test_the_saves_directory_is_not_walked(self):
+    def test_a_cartsave_directory_alone_creates_no_row(self):
+        """A save has no SHA-1 in this index and may not invent a dump."""
         self.lib.create(self.root)
-        self.write("saves", "ZELDA/2026-08-21.sav", b"a save")
+        self.write("cartsaves", "ZELDA/2026-08-21.sav", b"a save")
         self.assertEqual(len(self.lib.rebuild(self.root)), 0)
+
+    def test_a_cartsave_directory_attaches_to_the_rom_it_is_named_for(self):
+        self.lib.create(self.root)
+        self.file_one(b"zelda bytes", "Zelda (USA).gb", "ZELDA.gb")
+        self.write("cartsaves", "Zelda (USA)/2026-08-21.sav", b"a save")
+        row = next(iter(self.lib.rebuild(self.root)))
+        self.assertEqual(row.cartsaves, "Zelda (USA)")
 
     def test_an_unknown_index_rebuilds_itself_on_open(self):
         self.lib.create(self.root)
@@ -371,7 +384,7 @@ class RebuildTest(Env):
         self.lib.create(self.root)
         index = self.lib.Index()
         index.put(self.lib.Row(sha1="a" * 40, size=1, crc32="deadbeef",
-                               filed="2026-08-21", rom="Nothing On Disk.gb"))
+                               imported="2026-08-21", rom="Nothing On Disk.gb"))
         self.lib.save(self.root, index)
         self.assertEqual(self.lib.open_index(self.root).to_dict(),
                          index.to_dict())
@@ -409,3 +422,63 @@ class RebuildTest(Env):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheatsDirTest(Env):
+    """Cheat sources are copied in, so copying the library copies them.
+
+    Every pin the app had ever made named a path outside: four in the cheat
+    database cache, which the update button replaces wholesale, and two in a
+    git working tree. Both break silently.
+    """
+
+    def outside(self, name: str, data: bytes = b"cheat0_desc = \"x\"\n") -> str:
+        d = os.path.join(self.tmp.name, "elsewhere")
+        os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, name)
+        with open(p, "wb") as f:
+            f.write(data)
+        return p
+
+    def test_a_source_from_outside_is_copied_in(self):
+        self.lib.create(self.root)
+        src = self.outside("Zelda (USA).cht")
+        got = self.lib.take_in(self.root, src)
+        self.assertEqual(os.path.dirname(got),
+                         self.lib.cheats_dir(self.root))
+        self.assertTrue(self.lib.inside(self.root, got))
+        self.assertTrue(os.path.exists(src), "the original must be left alone")
+
+    def test_a_source_already_inside_is_left_where_it_is(self):
+        self.lib.create(self.root)
+        src = self.outside("Zelda (USA).cht")
+        once = self.lib.take_in(self.root, src)
+        twice = self.lib.take_in(self.root, once)
+        self.assertEqual(once, twice)
+
+    def test_the_same_bytes_arriving_twice_are_not_copied_twice(self):
+        self.lib.create(self.root)
+        a = self.lib.take_in(self.root, self.outside("Zelda (USA).cht"))
+        b = self.lib.take_in(self.root, self.outside("Zelda (USA).cht"))
+        self.assertEqual(a, b)
+        self.assertEqual(len(os.listdir(self.lib.cheats_dir(self.root))), 1)
+
+    def test_two_different_files_of_one_name_are_both_kept(self):
+        self.lib.create(self.root)
+        a = self.lib.take_in(self.root, self.outside("Zelda (USA).cht"))
+        b = self.lib.take_in(self.root,
+                             self.outside("Zelda (USA).cht", b"different\n"))
+        self.assertNotEqual(a, b)
+        self.assertEqual(len(os.listdir(self.lib.cheats_dir(self.root))), 2)
+
+    def test_a_library_made_before_cheats_existed_is_still_ready(self):
+        """cheats/ arrived later. An older library is old, not broken."""
+        self.lib.create(self.root)
+        os.rmdir(self.lib.cheats_dir(self.root))
+        self.assertTrue(self.lib.ready(self.root))
+
+    def test_a_zip_is_taken_in_like_any_other_source(self):
+        self.lib.create(self.root)
+        src = self.outside("Metroid - Zero Mission (USA).zip", b"PK\x05\x06" + b"\x00" * 18)
+        got = self.lib.take_in(self.root, src)
+        self.assertEqual(os.path.dirname(got), self.lib.cheats_dir(self.root))

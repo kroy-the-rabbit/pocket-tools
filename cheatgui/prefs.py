@@ -54,7 +54,7 @@ def set_library(path: str | None) -> None:
 
 
 def get_rejected(sha1: str) -> str | None:
-    """The day a cartridge dump was turned down, or None if it never was.
+    """The day a cartridge dump was ignored, or None if it never was.
 
     Keyed on SHA-1, like everything else about a dump, because a filename is
     exactly what collides: two cartridges that both title themselves ZELDA
@@ -71,7 +71,7 @@ def get_rejected(sha1: str) -> str | None:
 
 
 def set_rejected(sha1: str, when: str | None) -> None:
-    """Remember, or with None forget, that a dump was turned down.
+    """Remember, or with None forget, that a dump is ignored.
 
     Forgetting is what re-offering a dump means, and it is a separate call
     because it has to be asked for: the point of the rejection is that the next
@@ -83,6 +83,23 @@ def set_rejected(sha1: str, when: str | None) -> None:
         rejected.pop(sha1, None)
     else:
         rejected[sha1] = when
+    _save(data)
+
+
+def all_sources() -> dict:
+    """Every pinned cheat source, keyed as they are stored."""
+    return dict(_load().get("sources", {}))
+
+
+def set_source_key(key: str, cht_path: str) -> None:
+    """Repoint one pin, by the key it is already stored under.
+
+    Separate from set_source because that one derives the key from a ROM path,
+    and repointing an existing pin must not risk deriving a different key and
+    leaving the old one behind.
+    """
+    data = _load()
+    data.setdefault("sources", {})[key] = cht_path
     _save(data)
 
 
@@ -99,4 +116,32 @@ def set_source(rom_path: str, cht_path: str | None) -> None:
         sources.pop(key, None)
     else:
         sources[key] = cht_path
+    _save(data)
+
+
+def get_save_name(sha1: str) -> str | None:
+    """What the user called one save read, or None if they never said.
+
+    Keyed on the save's own SHA-1, not on its filename and not on the
+    cartridge, because the file is dated and immutable and the name is the one
+    thing about it a person chose. Two reads of one cartridge are different
+    bytes and get different keys; the same bytes arriving twice are the same
+    read and keep the name already given.
+
+    A decision, so it lives here rather than in the library's index. A rebuild
+    re-hashes files and asks the DAT again; nothing it can do recovers the
+    fact that this one is the save from before the boss.
+    """
+    return _load().get("save_names", {}).get(sha1)
+
+
+def set_save_name(sha1: str, text: str | None) -> None:
+    """Name a save read, or with None or an empty string forget the name."""
+    data = _load()
+    names = data.setdefault("save_names", {})
+    text = (text or "").strip()
+    if not text:
+        names.pop(sha1, None)
+    else:
+        names[sha1] = text
     _save(data)

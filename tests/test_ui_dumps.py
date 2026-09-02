@@ -230,20 +230,19 @@ class Dialog(unittest.TestCase):
         # and the file is still there until it is made.
         self.assertTrue(os.path.exists(p))
 
-    def test_a_filed_dump_is_not_asked_about_twice(self):
+    def test_an_imported_dump_is_not_asked_about_twice(self):
         p = self.put("ZELDA.gb", self.zelda)
         dlg = self.build()
         self.tick(dlg, p)
         dlg.add_ticked()
-        self.assertIn(self.state(dlg, p), ("in the library",
-                                           "card copy spare"))
+        self.assertIn(self.state(dlg, p), ("in the library", "duplicate"))
 
     def test_turning_a_dump_down_is_remembered(self):
         p = self.put("ZELDA.gb", self.zelda)
         dlg = self.build()
         self.tick(dlg, p)
-        dlg.turn_down()
-        self.assertEqual(self.state(dlg, p), "turned down")
+        dlg.set_ignored()
+        self.assertEqual(self.state(dlg, p), "ignored")
         self.assertTrue(self.dumps.rejected(
             self.dumps.read(p).sha1))
 
@@ -280,7 +279,7 @@ class Dialog(unittest.TestCase):
     def test_a_dump_turned_down_after_filing_can_still_be_tidied(self):
         """The exact state a real card got stuck in.
 
-        In the library, turned down, and still on the card. The verdict is
+        In the library, ignored, and still on the card. The verdict is
         REJECTED, which is not actionable, so every button went grey and the
         file could never be cleared - while cart-dumps was holding the same
         bytes the whole time.
@@ -290,8 +289,11 @@ class Dialog(unittest.TestCase):
         self.tick(dlg, p)
         dlg.add_ticked()
         self.tick(dlg, p)
-        dlg.turn_down()
-        self.assertEqual(self.state(dlg, p), "turned down")
+        dlg.set_ignored()
+        # The refusal is beside the point once the library holds the bytes:
+        # what the row has to say is that the card file is a second copy and
+        # can go.
+        self.assertEqual(self.state(dlg, p), "duplicate")
         self.tick(dlg, p)
         self.assertNotIn("disabled", dlg.clear_btn.state())
         dlg.clear_ticked()
@@ -299,7 +301,7 @@ class Dialog(unittest.TestCase):
 
     # ----------------------------------------------------------- collisions --
     def collide(self):
-        """A different cartridge already filed under the name this one wants."""
+        """A different cartridge already imported under the name this one wants."""
         taken = os.path.join(
             self.library.roms_dir(self.lib),
             "Legend of Zelda, The - Link's Awakening (USA, Europe).gb")
@@ -376,14 +378,14 @@ class Dialog(unittest.TestCase):
 
     # ---------------------------------------------------------- the shelf --
     def shelved(self):
-        """A library holding one filed dump, and a card without it."""
+        """A library holding one imported dump, and a card without it."""
         rom = "Tetris (World) (Rev 1).gb"
         with open(os.path.join(self.library.roms_dir(self.lib), rom),
                   "wb") as f:
             f.write(self.tetris)
         idx = self.library.load(self.lib)
         idx.put(self.library.Row(sha1="a" * 40, size=len(self.tetris),
-                                 crc32="deadbeef", filed="2026-08-27",
+                                 crc32="deadbeef", imported="2026-08-27",
                                  rom=rom, dump="TETRIS.gb", system="gb"))
         self.library.save(self.lib, idx)
         app = self.ui.App.__new__(self.ui.App)
@@ -393,7 +395,7 @@ class Dialog(unittest.TestCase):
         app.ready = {}
         return app, rom
 
-    def test_a_filed_dump_is_offered_as_the_card_rom_it_will_become(self):
+    def test_an_imported_dump_is_offered_as_the_card_rom_it_will_become(self):
         """`model.load` and the matcher then need no special case at all."""
         app, rom = self.shelved()
         shelf = self.ui.App.shelf(app)
@@ -484,7 +486,7 @@ class Dialog(unittest.TestCase):
         """Unidentified means there is no name to file it under."""
         idx = self.library.load(self.lib)
         idx.put(self.library.Row(sha1="b" * 40, size=1, crc32="0",
-                                 filed="2026-08-27", dump="MYSTERY.gb"))
+                                 imported="2026-08-27", dump="MYSTERY.gb"))
         self.library.save(self.lib, idx)
         app = self.ui.App.__new__(self.ui.App)
         app.card = type("C", (), {"root": self.card})()

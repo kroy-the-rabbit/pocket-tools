@@ -30,6 +30,7 @@ import shutil
 from typing import Optional
 
 import cheatfile
+import mister
 import chtparse   # tools/cheats, put on the path by __main__.py
 import gba as gba_mod
 
@@ -66,6 +67,11 @@ NO_LIMIT = cheatfile.NO_LIMIT
 
 
 def load_library(cht_path: str, platform: str) -> list:
+    # A GameHacking.org archive is a cheat source like a .cht is, and the rest
+    # of the app never has to know which it is holding: both hand back groups
+    # with .desc and .codes, and pack() takes a word from either.
+    if cht_path.lower().endswith(".zip"):
+        return mister.read(cht_path)
     with open(cht_path, "rb") as f:
         return cheatfile.parse(f.read(), platform)
 
@@ -166,7 +172,18 @@ def write(game_cht: str, groups: list, platform: str) -> tuple[int, int, bool]:
     want = [key_of(g) for g in groups]
     got = [key_of(g) for g in back]
     if got != want:
-        raise IOError(f"{game_cht}: wrote {len(want)} cheats but read back {len(got)}")
+        # The counts are only part of it, and reporting them alone produced
+        # "wrote 4 cheats but read back 4", which reads as a contradiction and
+        # sends you looking at the wrong thing. What is compared is identity.
+        if len(got) != len(want):
+            detail = f"wrote {len(want)} cheats but read back {len(got)}"
+        else:
+            lost = sum(1 for k in got if not k)
+            detail = (f"read back {lost} of {len(got)} cheats with no codes"
+                      if lost else
+                      f"{sum(1 for a, b in zip(want, got) if a != b)} of "
+                      f"{len(want)} cheats read back different")
+        raise IOError(f"{game_cht}: {detail}")
     if not all(g.enabled for g in back):
         raise IOError(f"{game_cht}: some cheats did not read back as enabled")
     if binpath:

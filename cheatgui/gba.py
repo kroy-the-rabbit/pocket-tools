@@ -42,6 +42,7 @@ from typing import Optional
 
 import cht2bin
 import gbacht
+import mister
 
 # The cheat table in gba_cheats.vhd, as entries rather than cheats. Every cheat
 # spends at least one and a conditional spends two, so this is the only limit
@@ -103,6 +104,14 @@ def parse(data: bytes, max_groups: int = NO_LIMIT) -> list:
     first couple of dozen invisible and unpickable. The limit is applied when a
     selection is written, by `pack()` and by `writer.check`.
     """
+    # A .cht written from a GameHacking.org archive carries pre-encoded
+    # words, which the libretro parser drops silently. Asked first because
+    # the shapes cannot collide: a word is 32 hex digits and a libretro GBA
+    # code is 8+8.
+    from_archive = mister.parse_cht(data)
+    if from_archive is not None:
+        return from_archive[:max_groups] if max_groups != NO_LIMIT \
+            else from_archive
     groups, _ = gbacht.parse(data, max_entries=NO_LIMIT,
                              max_group_entries=NO_LIMIT, browse=True)
     out = []
@@ -138,11 +147,18 @@ def pack(groups: list) -> bytes:
 def _word(code) -> int:
     """The 128-bit word for one code, back from its canonical name.
 
+    A code that already knows its word hands it over: a GameHacking.org
+    archive ships the encoded words themselves, so there is nothing to decode
+    and no decoder that could reproduce the code text they came from.
+
     Decoding the name rather than carrying the word keeps one decoder in the
     design. `parse` built the name from an entry; feeding it back through the
     same pair decoder must give that entry again, and the tests hold it to that
     over the whole database.
     """
+    word = getattr(code, "word", None)
+    if word is not None:
+        return word
     t1, _, t2 = code.raw.partition("+")
     entry, why = gbacht.decode_pair(t1, t2)
     if entry is None:

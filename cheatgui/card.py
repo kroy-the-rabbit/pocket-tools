@@ -41,8 +41,43 @@ CARTDUMPS = "cartdumps"
 
 
 def cartdumps_dir(root: str, pid: str) -> str:
-    """The folder on the card holding filed dumps for one system."""
+    """The folder on the card holding imported dumps for one system."""
     return os.path.join(root, "Assets", CARTDUMPS, pid)
+
+
+def cartsaves_dir(root: str, pid: str) -> str:
+    """Where the Pocket keeps save RAM for the dumps in cartdumps_dir().
+
+    /Saves mirrors /Assets below the top level, so a ROM at
+    Assets/cartdumps/<pid>/<name>.<ext> saves to
+    Saves/cartdumps/<pid>/<name>.sav. Not inferred from the APF documentation:
+    the Pocket created these three by itself, from dumps copied back by this
+    app, and they are what a restored save has to be named to be picked up.
+
+        Assets/cartdumps/gbc/Super Mario Bros. Deluxe (Europe) (Rev 2).gbc
+        Saves/cartdumps/gbc/Super Mario Bros. Deluxe (Europe) (Rev 2).sav
+    """
+    return os.path.join(root, "Saves", CARTDUMPS, pid)
+
+
+def save_beside(rom_path: str) -> str:
+    """The save file the Pocket would write for a ROM sitting at `rom_path`.
+
+    The mechanism only, and it is deliberately not a decision about where a
+    dump goes. Imported dumps have one destination, cartdumps_dir(), and this
+    is called on a path already under it. The mirror is general because the
+    Pocket's is -- any Assets subdirectory saves to the matching Saves one --
+    but nothing here may use that to put a dump anywhere else.
+    """
+    head, tail = os.path.split(rom_path)
+    parts = head.split(os.sep)
+    for i, part in enumerate(parts):
+        if part == "Assets":
+            parts[i] = "Saves"
+            break
+    else:
+        raise ValueError(f"not a path under Assets: {rom_path}")
+    return os.path.join(os.sep.join(parts), os.path.splitext(tail)[0] + ".sav")
 
 # Pocket platform id -> the libretro cheat database directory for it, and the
 # ROM extension that goes with it. Everything the app knows how to handle is

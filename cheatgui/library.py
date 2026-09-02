@@ -14,7 +14,8 @@ alongside them is a migration:
     <library>/
         roms/          canonical No-Intro names, extension and all
         cart-dumps/    originals, under the names the core gave them
-        saves/         dated, immutable, one directory per cartridge
+        cartsaves/     one directory per cartridge, dated files inside
+        cheats/        cheat sources, copied in so a pin cannot dangle
         index.json     the store; delete it and it rebuilds
 
 There are no per-system directories. The canonical name carries the extension
@@ -23,10 +24,23 @@ the system a second time, in the path, where it could disagree with the
 filename. One authority is better than two, and the extension is the one the
 rest of the world already reads.
 
-Nothing in this module writes under saves/. The directory is created so that
-when the dumper learns to back a save up nothing above it moves; what goes
-inside it is deliberately a later decision, made against a real .sav rather
-than guessed at now.
+cartsaves/ holds save RAM read off a cartridge, one directory per cartridge
+named after its ROM, and inside it one file per read named for the day it was
+taken:
+
+    cartsaves/Disney's The Little Mermaid II - Pinball Frenzy (USA)/2026-08-31.sav
+
+Dated because a cartridge can be read more than once and the reads can differ
+without either being wrong: a cartridge with a dead battery returns volatile
+content, and PNBALFRENZY demonstrated exactly that, three reads with the same
+header and three different sets of score digits. Immutable for the same
+reason. Nothing here overwrites a save; a second read on the same day lands
+beside the first under a suffixed name.
+
+A save carries no header, no checksum and no DAT entry, so it cannot be
+identified on its own evidence. It is associated with a cartridge by the stem
+the core gave both files, and it is stored under the name the ROM was imported
+as, because that is the name an emulator will look for.
 
 index.json lives in the library rather than beside prefs.json, because the
 library is what it describes and the two should travel together: copying the
@@ -53,6 +67,7 @@ import datetime
 import hashlib
 import json
 import os
+import shutil
 import zlib
 from dataclasses import dataclass, replace
 from typing import Callable, Iterator
@@ -67,12 +82,20 @@ VERSION = 1
 
 ROMS = "roms"
 CART_DUMPS = "cart-dumps"
-SAVES = "saves"
+CARTSAVES = "cartsaves"
 
-# Created together, so a library is never half a library. saves/ is in here
-# despite nothing writing to it: an empty directory is the cheapest possible way
-# to promise that its contents will not have to move later.
-SUBDIRS = (ROMS, CART_DUMPS, SAVES)
+# Cheat sources, copied in rather than pointed at. Every pin used to name a
+# path outside the library: four into ~/.local/share/pocket-cheats, which the
+# update button replaces wholesale, and two into a git working tree, which a
+# clean would empty. A library that cannot be copied without its sources is
+# not the thing its own docstring above claims it is.
+CHEATS = "cheats"
+
+# Created together, so a library is never half a library. CHEATS is not in
+# REQUIRED: an existing library predates it and must not read as broken for
+# missing a directory nothing had yet.
+SUBDIRS = (ROMS, CART_DUMPS, CARTSAVES, CHEATS)
+REQUIRED = (ROMS, CART_DUMPS, CARTSAVES)
 
 INDEX = "index.json"
 
@@ -104,8 +127,124 @@ def dumps_dir(root: str) -> str:
     return os.path.join(root, CART_DUMPS)
 
 
-def saves_dir(root: str) -> str:
-    return os.path.join(root, SAVES)
+def cheats_dir(root: str) -> str:
+    return os.path.join(root, CHEATS)
+
+
+def inside(root: str, path: str) -> bool:
+    """True if `path` is in the library, so copying the library copies it."""
+    try:
+        return os.path.commonpath([os.path.abspath(root),
+                                   os.path.abspath(path)]) == \
+            os.path.abspath(root)
+    except ValueError:                  # different drives on Windows
+        return False
+
+
+def take_in(root: str, path: str) -> str:
+    """Copy a cheat source into the library and hand back the copy's path.
+
+    Already inside, or the same bytes already there, and nothing is written.
+    A different file wanting a name that is taken gets the short SHA-1 in its
+    own, the same keep-both rule dumps use, because two cheat files can
+    reasonably share a name and neither is wrong.
+
+    The original is never moved or deleted. It is somebody's file in somebody's
+    directory and this is a copy, not a filing cabinet.
+    """
+    if inside(root, path):
+        return path
+    folder = os.path.join(root, CHEATS)
+    os.makedirs(folder, exist_ok=True)
+    name = os.path.basename(path)
+    dest = os.path.join(folder, name)
+    if os.path.exists(dest):
+        if sha1_of(dest) == sha1_of(path):
+            return dest
+        stem, ext = os.path.splitext(name)
+        dest = os.path.join(folder, f"{stem} [{sha1_of(path)[:8]}]{ext}")
+        if os.path.exists(dest):
+            return dest
+    shutil.copyfile(path, dest)
+    return dest
+
+
+def cartsaves_dir(root: str) -> str:
+    return os.path.join(root, CARTSAVES)
+
+
+def cartsave_dir(root: str, rom_name: str) -> str:
+    """Where one cartridge's saves live: a directory named after its ROM.
+
+    The ROM's extension is dropped. The name is otherwise untouched, including
+    its spaces and brackets, so the directory reads as the game it belongs to
+    in a file manager and matches the entry in roms/ exactly.
+    """
+    return os.path.join(cartsaves_dir(root), os.path.splitext(rom_name)[0])
+
+
+# Where a save read came from, and it is part of the filename rather than a
+# field somewhere, so a rebuild can still tell them apart and so a file manager
+# shows it. They are not interchangeable and must never be listed as one thing:
+#
+#   CART    read off the cartridge chip by the dumper core. Evidence of what
+#           the chip held, and exactly as many bytes as the chip has.
+#   POCKET  written by an emulated core on the Pocket while somebody played.
+#           Padded to that core's save slot, so a 32 KiB SRAM cartridge comes
+#           back as a 65,536 byte file with half of it filler.
+#
+# Conflating the two put a 64 KB Pocket save where Zero Mission's 32 KiB
+# cartridge read belonged, and nothing on screen said which was which.
+CART = "cart"
+POCKET = "pocket"
+ORIGINS = (CART, POCKET)
+
+
+def cartsave_dest(root: str, rom_name: str, day: str, sha1: str,
+                  origin: str = CART) -> str:
+    """Where one save read lands: cartsaves/<rom>/<day> <origin>.sav.
+
+    A second read of the same cartridge on the same day gets the short SHA-1 in
+    its name rather than overwriting the first. Two reads that returned the
+    same bytes therefore land on the same path and the second write is a
+    no-op, and two that differ are both kept, which is the case a dead battery
+    produces and the one worth not losing.
+    """
+    if origin not in ORIGINS:
+        raise ValueError(f"unknown save origin: {origin}")
+    folder = cartsave_dir(root, rom_name)
+    plain = os.path.join(folder, f"{day} {origin}.sav")
+    if not os.path.exists(plain) or sha1_of(plain) == sha1:
+        return plain
+    return os.path.join(folder, f"{day} {origin} [{sha1[:8]}].sav")
+
+
+def cartsave_parts(name: str) -> tuple[str, str]:
+    """(day, origin) out of a save read's filename.
+
+    A name written before origins existed has no origin in it and reads as a
+    cartridge read, which is what those all were: nothing captured a Pocket
+    save until the button for it existed.
+    """
+    stem = os.path.splitext(name)[0]
+    for origin in ORIGINS:
+        marker = f" {origin}"
+        if stem.endswith(marker):
+            return stem[:-len(marker)], origin
+        cut = stem.find(marker + " [")
+        if cut != -1:
+            return stem[:cut], origin
+    return stem, CART
+
+
+def cartsave_reads(root: str, rom_name: str) -> list[str]:
+    """Every save read kept for one cartridge, oldest name first."""
+    folder = cartsave_dir(root, rom_name)
+    try:
+        return sorted(n for n in os.listdir(folder)
+                      if n.lower().endswith(".sav") and not n.startswith("."))
+    except OSError:
+        return []
 
 
 def index_path(root: str) -> str:
@@ -124,8 +263,12 @@ def create(root: str) -> str:
 
 
 def ready(root: str) -> bool:
-    """True if the layout is there. A library missing a directory is not one."""
-    return all(os.path.isdir(os.path.join(root, sub)) for sub in SUBDIRS)
+    """True if the layout is there. A library missing a directory is not one.
+
+    Asked of REQUIRED rather than SUBDIRS: cheats/ arrived later and a library
+    made before it exists is not broken, it is just older. create() adds it.
+    """
+    return all(os.path.isdir(os.path.join(root, sub)) for sub in REQUIRED)
 
 
 # --------------------------------------------------------------- the hashing --
@@ -173,9 +316,10 @@ class Row:
     sha1: str
     size: int
     crc32: str
-    filed: str
+    imported: str
     rom: str | None = None          # name under roms/, canonical
     dump: str | None = None         # name under cart-dumps/, the core's own
+    cartsaves: str | None = None    # directory under cartsaves/, if any
     title: str | None = None        # the No-Intro game name
     system: str | None = None       # the DAT that held it: gb, gbc, gba
     region: str | None = None
@@ -187,9 +331,14 @@ class Row:
     def dump_path(self, root: str) -> str | None:
         return os.path.join(dumps_dir(root), self.dump) if self.dump else None
 
+    def cartsaves_path(self, root: str) -> str | None:
+        return (os.path.join(cartsaves_dir(root), self.cartsaves)
+                if self.cartsaves else None)
+
     def to_dict(self) -> dict:
         return {"sha1": self.sha1, "size": self.size, "crc32": self.crc32,
-                "filed": self.filed, "rom": self.rom, "dump": self.dump,
+                "imported": self.imported, "rom": self.rom, "dump": self.dump,
+                "cartsaves": self.cartsaves,
                 "title": self.title, "system": self.system,
                 "region": self.region, "clone_of": self.clone_of}
 
@@ -205,8 +354,13 @@ class Row:
         return cls(sha1=sha1,
                    size=int(d.get("size") or 0),
                    crc32=d.get("crc32") or "",
-                   filed=d.get("filed") or "",
+                   # "filed" is what this field was called before importing
+                   # was the word for it. Read as a fallback rather than
+                   # migrated, so an index written by an older build keeps its
+                   # dates instead of being thrown away for a renamed key.
+                   imported=d.get("imported") or d.get("filed") or "",
                    rom=d.get("rom"), dump=d.get("dump"),
+                   cartsaves=d.get("cartsaves"),
                    title=d.get("title"), system=d.get("system"),
                    region=d.get("region"), clone_of=d.get("clone_of"))
 
@@ -339,8 +493,11 @@ def rebuild(root: str, enrich: Callable[[Row], Row] | None = None) -> Index:
     row and returns one; identification arriving later is exactly why the four
     enrichment fields default to None instead of being required.
 
-    saves/ is not walked. A save is not a dump, it has no row, and the shape of
-    that directory is not decided yet.
+    cartsaves/ is walked last and only to attach directories to rows that
+    already exist, because a save has no SHA-1 of its own in this index and
+    cannot create a row. A directory whose name matches no imported ROM is
+    left alone and reported by nothing: it is somebody's, and this walk is not
+    entitled to an opinion about it.
     """
     index = Index()
     for place, field in ((ROMS, "rom"), (CART_DUMPS, "dump")):
@@ -354,20 +511,30 @@ def rebuild(root: str, enrich: Callable[[Row], Row] | None = None) -> Index:
                 # not act on bytes it could not see.
                 say.err(f"cannot read {full}: {e}")
                 continue
-            filed = datetime.date.fromtimestamp(stat.st_mtime).isoformat()
+            imported = datetime.date.fromtimestamp(stat.st_mtime).isoformat()
             row = index.get(sha1)
             if row is None:
-                row = Row(sha1=sha1, size=stat.st_size, crc32=crc32, filed=filed)
-            elif filed < row.filed:
+                row = Row(sha1=sha1, size=stat.st_size, crc32=crc32,
+                          imported=imported)
+            elif imported < row.imported:
                 # The earliest of a dump's files is when it entered the library,
                 # which is the date the collision dialog shows.
-                row = replace(row, filed=filed)
+                row = replace(row, imported=imported)
             if getattr(row, field) is None:
                 row = replace(row, **{field: name})
             # else: two files, same directory, same bytes. They are copies of
             # each other, so the first by name stands for both and the duplicate
             # needs no row of its own.
             index.put(row)
+    # Attach save directories by ROM name. Rows are keyed by the ROM's SHA-1
+    # and a save's bytes are its own, so the only link is the name the ROM was
+    # imported under, which is what cartsave_dir() builds the directory from.
+    by_rom = {os.path.splitext(r.rom)[0]: r for r in index if r.rom}
+    base = cartsaves_dir(root)
+    for name in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+        row = by_rom.get(name)
+        if row is not None and os.path.isdir(os.path.join(base, name)):
+            index.put(replace(row, cartsaves=name))
     if enrich is not None:
         for row in list(index):
             index.put(enrich(row))

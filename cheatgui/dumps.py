@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""What the dumper core left on the card: reading it, naming it, filing it.
+"""What the dumper core left on the card: reading it, naming it, importing it.
 
 The core reads a cartridge and writes a ROM image into
 `/Assets/carttools/common/`, flat, with no sidecar and under a name taken from
@@ -57,7 +57,8 @@ import datetime
 import enum
 import os
 import re
-from dataclasses import dataclass, replace
+import shutil
+from dataclasses import dataclass, field, replace
 
 import card
 import cheatlib
@@ -90,6 +91,12 @@ MIN_DUMP = HEADER
 # the real directory has one.
 NOT_DUMPS = (".json", ".txt", ".md", ".log", ".tmp", ".ini", ".sav")
 
+# A save is not a dump and never goes through identification: it has no header,
+# no No-Intro entry and no canonical name of its own. It is listed separately,
+# and it is paired to a dump by stem because that is the one thing the core
+# guarantees about the two files it writes for one cartridge.
+SAVE_EXT = ".sav"
+
 # The 48 bytes at 0x104 of every Game Boy and Game Boy Color cartridge. The
 # boot ROM compares them before it will run anything, so a file that has them
 # is a Game Boy image and a file that does not is not.
@@ -121,9 +128,17 @@ GBA_SUM_AT = 0xBD
 # Advance cartridge reaches 32 MB and every byte of it goes through here.
 CHUNK = 1024 * 1024
 
-# What the core keeps in a filename. Everything else, including the space and
-# the NUL padding, becomes an underscore.
-_KEEP = re.compile(r"[^A-Za-z0-9_-]")
+# What the core keeps in a filename. Everything else, including the space, the
+# hyphen and the NUL padding, becomes an underscore.
+#
+# The hyphen used to be kept here, following the specification in
+# pocket-cartridge's docs/FILE-FORMATS.md rather than the core. A real card
+# settled it: dump_path_gen.sv's sanitize keeps A-Z0-9 and turns everything
+# else into "_", so the cartridge titled DQM2-R is written as
+# DQM2_R_____BQLJ.gbc, and keeping the hyphen made this derive DQM2-R_____BQLJ
+# and report the file as renamed by hand. This reproduces the core, because
+# reproducing the core is the only thing it is for.
+_KEEP = re.compile(r"[^A-Za-z0-9_]")
 
 # No-Intro puts the region in the first parenthesised group of a name; the ones
 # after it are revision and enhancement tags. "(USA, Australia)" comes first,
@@ -306,6 +321,105 @@ def scan(card_root: str) -> list[Dump]:
     return found
 
 
+@dataclass(frozen=True)
+class Save:
+    """One .sav the core left on the card. Not hashed, and not identified.
+
+    A save has no header to read and no DAT to look it up in, so nothing here
+    can say which game it belongs to on its own evidence. `stem` is the only
+    link back to a cartridge, and it is the core's own basename rather than a
+    canonical name.
+    """
+    path: str
+    name: str
+    size: int
+
+    @property
+    def stem(self) -> str:
+        return os.path.splitext(self.name)[0]
+
+
+def scan_saves(card_root: str) -> list[Save]:
+    """Every .sav in the core's output directory, in name order. No hashing.
+
+    Separate from scan() rather than a flag on it, because the two answer
+    different questions and only one of them is expensive: this one is allowed
+    to run on every card scan, and scan() is not.
+    """
+    base = dump_dir(card_root)
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return []
+    found = []
+    for name in names:
+        if name.startswith("."):
+            continue
+        if os.path.splitext(name)[1].lower() != SAVE_EXT:
+            continue
+        full = os.path.join(base, name)
+        if not os.path.isfile(full):
+            continue
+        try:
+            size = os.path.getsize(full)
+        except OSError:
+            say.err(f"cannot read {full}")
+            continue
+        found.append(Save(path=full, name=name, size=size))
+    return found
+
+
+@dataclass(frozen=True)
+class Waiting:
+    """What the card is carrying, counted without reading any of it.
+
+    Deliberately cheap and deliberately dumb: it counts directory entries so
+    that the main window can say there is something here on every scan. It
+    knows nothing about what is already imported, so it is a prompt to look and
+    never a claim that there is work to do. survey() is what actually answers
+    that, and it hashes every byte to do it.
+    """
+    dumps: int = 0
+    saves: int = 0
+
+    @property
+    def any(self) -> bool:
+        return bool(self.dumps or self.saves)
+
+    def note(self) -> str:
+        """One line for the main window, or "" when the card carries nothing."""
+        if not self.any:
+            return ""
+        parts = []
+        if self.dumps:
+            parts.append(f"{self.dumps} cartridge dump"
+                         f"{'s' if self.dumps > 1 else ''}")
+        if self.saves:
+            parts.append(f"{self.saves} save{'s' if self.saves > 1 else ''}")
+        return (" and ".join(parts)
+                + " on the card. Cartridge dumps... to import them.")
+
+
+def waiting(card_root: str) -> Waiting:
+    """Count what is in the core's output directory. Reads no file contents."""
+    base = dump_dir(card_root)
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return Waiting()
+    dumps = saves = 0
+    for name in names:
+        if name.startswith("."):
+            continue
+        if not os.path.isfile(os.path.join(base, name)):
+            continue
+        if os.path.splitext(name)[1].lower() == SAVE_EXT:
+            saves += 1
+        elif is_dump(name):
+            dumps += 1
+    return Waiting(dumps=dumps, saves=saves)
+
+
 # -------------------------------------------------------- prong 2: identify --
 @dataclass(frozen=True)
 class Identity:
@@ -423,11 +537,12 @@ def readback(dump: Dump, core_crc32: str | None) -> bool | None:
 # ------------------------------------------------------------ prong 3: file --
 class Verdict(enum.Enum):
     """What the app would do with a dump, before anybody is asked."""
-    FILE = "file"                  # identified, the names are free, go ahead
+    IMPORT = "import"                  # identified, the names are free, go ahead
     COLLIDES = "collides"          # a name is taken by different bytes: ask
-    FILED = "filed"                # this SHA-1 is already in the library: skip
-    REJECTED = "rejected"          # turned down before: skip, re-offer on ask
-    MISSING = "missing"            # known SHA-1, but its filed copy is gone
+    IMPORTED = "imported"          # this SHA-1 is already in the library: skip
+    SAVE_ONLY = "save only"        # the ROM is in; the save beside it is not
+    REJECTED = "rejected"          # ignored before: skip, re-offer on ask
+    MISSING = "missing"            # known SHA-1, but its imported copy is gone
     UNIDENTIFIED = "unidentified"  # no DAT has it; offer nothing automatic
     UNREADABLE = "unreadable"      # something is in the way and cannot be read
 
@@ -455,7 +570,7 @@ class Standing:
     path: str
     sha1: str = ""        # "" when the file could not be read
     size: int = 0
-    filed: str = ""       # the day it arrived, for the collision dialog
+    imported: str = ""    # the day it arrived, for the collision dialog
 
     @property
     def readable(self) -> bool:
@@ -475,6 +590,7 @@ class Proposal:
     root: str                                   # the library
     rom_name: str | None = None                 # name under roms/, canonical
     dump_name: str | None = None                # name under cart-dumps/
+    save: Save | None = None                    # the .sav beside it, if any
     verdict: Verdict = Verdict.UNIDENTIFIED
     rom_standing: Standing | None = None
     dump_standing: Standing | None = None
@@ -488,7 +604,8 @@ class Proposal:
     @property
     def actionable(self) -> bool:
         """True if committing this would write something."""
-        return self.verdict in (Verdict.FILE, Verdict.COLLIDES, Verdict.MISSING)
+        return self.verdict in (Verdict.IMPORT, Verdict.COLLIDES,
+                                Verdict.MISSING, Verdict.SAVE_ONLY)
 
     @property
     def collides(self) -> bool:
@@ -497,7 +614,7 @@ class Proposal:
     @property
     def quiet(self) -> bool:
         """True if this dump is settled and the user should not see it."""
-        return self.verdict in (Verdict.FILED, Verdict.REJECTED)
+        return self.verdict in (Verdict.IMPORTED, Verdict.REJECTED)
 
     def rom_path(self) -> str | None:
         return (os.path.join(library.roms_dir(self.root), self.rom_name)
@@ -509,13 +626,14 @@ class Proposal:
 
 
 @dataclass(frozen=True)
-class Filing:
+class Import:
     """What commit() did, or why it did not."""
     proposal: Proposal
     ok: bool = False
     row: library.Row | None = None
     rom_path: str = ""
     dump_path: str = ""
+    cartsave_path: str = ""     # the save read, under cartsaves/, if there was one
     verified: bool = False      # every byte written was compared with the card
     removed: bool = False       # the card original has been deleted
     discarded: bool = False     # the user chose Discard; nothing was touched
@@ -538,7 +656,7 @@ def rejected(sha1: str) -> bool:
 
 
 def reject(dump: Dump | str) -> None:
-    """Remember that a dump was turned down, so the next run does not ask.
+    """Remember that a dump is ignored, so the next run does not offer it.
 
     In prefs and not in the index, because it is a decision: a walk of the
     library re-hashes files and asks the DAT again, and no amount of that will
@@ -555,30 +673,44 @@ def unreject(dump: Dump | str) -> None:
 
 
 def propose(dump: Dump, identity: Identity, root: str, index: library.Index,
-            *, offer_rejected: bool = False) -> Proposal:
+            *, offer_rejected: bool = False, save: Save | None = None
+            ) -> Proposal:
     """Work out what would happen to one dump. Reads files; writes none.
 
     The order of the checks is the order of the cheapest honest answer. A
     rejection is asked first because the user already said no and nothing after
-    it can change that; the index is asked next because a dump filed before
+    it can change that; the index is asked next because a dump imported before
     needs no second decision; and only then does anything look at the library's
     directories, which is where the reads are.
     """
     row = index.get(dump.sha1)
 
     if not offer_rejected and rejected(dump.sha1):
-        return Proposal(dump, identity, root, verdict=Verdict.REJECTED, row=row,
-                        note="turned down before")
+        return Proposal(dump, identity, root, save=save, verdict=Verdict.REJECTED, row=row,
+                        note="ignored before")
 
     if row is not None and (row.rom or row.dump):
         gone = [p for p in (row.rom_path(root), row.dump_path(root))
                 if p and not os.path.exists(p)]
+        # A dump whose ROM is already imported still has something to do if
+        # the save beside it on the card is a read the library has not seen.
+        # A cartridge is re-dumped precisely to catch a save that changed, and
+        # skipping on the ROM's SHA-1 alone would throw that away silently.
         if not gone:
-            return Proposal(dump, identity, root, rom_name=row.rom,
-                            dump_name=row.dump, verdict=Verdict.FILED, row=row)
+            # Two answers, and the difference is the save. The ROM is in the
+            # library either way; SAVE_ONLY says the save read beside it on
+            # the card is one the library has never seen, which is the whole
+            # of what is left to do for this cartridge.
+            done = not _unseen_save(save, root, row.rom)
+            return Proposal(dump, identity, root, save=save, rom_name=row.rom,
+                            dump_name=row.dump, row=row,
+                            verdict=Verdict.IMPORTED if done
+                            else Verdict.SAVE_ONLY,
+                            note="" if done else "its save is not in the "
+                                                 "library yet")
 
     # The library's own names win over the DAT's when there is a row, because a
-    # dump filed under a keep-both suffix has to be restored under that suffix
+    # dump imported under a keep-both suffix has to be restored under that suffix
     # and not under the plain canonical name, which belongs to another file.
     rom_name = (row.rom if row and row.rom else None) or identity.name
     dump_name = (row.dump if row and row.dump else None) or dump.name
@@ -588,15 +720,15 @@ def propose(dump: Dump, identity: Identity, root: str, index: library.Index,
         # revision No-Intro has not catalogued and a reproduction cartridge all
         # arrive here, nothing can tell them apart, and so nothing automatic is
         # offered.
-        return Proposal(dump, identity, root, verdict=Verdict.UNIDENTIFIED,
+        return Proposal(dump, identity, root, save=save, verdict=Verdict.UNIDENTIFIED,
                         row=row, note=identity.outcome.value)
 
     rom_standing = _standing(os.path.join(library.roms_dir(root), rom_name))
     dump_standing = _standing(os.path.join(library.dumps_dir(root), dump_name))
     standings = [s for s in (rom_standing, dump_standing) if s is not None]
 
-    verdict = Verdict.MISSING if row is not None else Verdict.FILE
-    note = "filed before, and its copy in the library is gone" if row else ""
+    verdict = Verdict.MISSING if row is not None else Verdict.IMPORT
+    note = "imported before, and its copy in the library is gone" if row else ""
 
     if any(not s.readable for s in standings):
         # Report it and move on. Overwriting a file that could not be read
@@ -608,14 +740,14 @@ def propose(dump: Dump, identity: Identity, root: str, index: library.Index,
         verdict = Verdict.COLLIDES
         note = "that name is taken, by different bytes"
 
-    return Proposal(dump, identity, root, rom_name=rom_name,
+    return Proposal(dump, identity, root, save=save, rom_name=rom_name,
                     dump_name=dump_name, verdict=verdict,
                     rom_standing=rom_standing, dump_standing=dump_standing,
                     row=row, note=note)
 
 
 def commit(proposal: Proposal, index: library.Index,
-           choice: Choice = Choice.KEEP_BOTH) -> Filing:
+           choice: Choice = Choice.KEEP_BOTH) -> Import:
     """Write the dump into the library. Does not touch the card.
 
     Two files land for one dump: the canonical copy under roms/, which is the
@@ -632,10 +764,10 @@ def commit(proposal: Proposal, index: library.Index,
     if choice is Choice.DISCARD:
         # Nothing is written and nothing is remembered. Discarding is not
         # rejecting: the dump stays on the card and comes back next time.
-        return Filing(proposal, ok=False, discarded=True,
+        return Import(proposal, ok=False, discarded=True,
                       problem="discarded; the dump stays on the card")
     if not proposal.actionable:
-        return Filing(proposal, ok=False,
+        return Import(proposal, ok=False,
                       problem=f"nothing to do: {proposal.verdict.value}")
 
     root = proposal.root
@@ -669,27 +801,131 @@ def commit(proposal: Proposal, index: library.Index,
             del written[field]
             break
 
-    filed = row_for(dump, proposal.identity,
+    # The save goes in last and only once the ROM has a name, because the
+    # directory it lands in is named after that name. A save that fails to
+    # copy does not fail the import: the ROM is the thing being imported and
+    # it is already on disk, so the honest result is an imported dump that
+    # says its save did not make it.
+    cartsave_path = ""
+    if proposal.save is not None and written.get("rom"):
+        cartsave_path, why = _place_cartsave(proposal.save, root,
+                                             written["rom"])
+        if why and not problem:
+            problem = why
+
+    row = row_for(dump, proposal.identity,
                     rom=written.get("rom"), dump_name=written.get("dump"),
-                    was=proposal.row)
+                    was=proposal.row,
+                    cartsaves=(os.path.splitext(written["rom"])[0]
+                               if cartsave_path else
+                               (proposal.row.cartsaves if proposal.row
+                                else None)))
     if written:
         # Recorded even when the second copy failed. The index is an
-        # observation of what is on disk, so half a filing is more truthful
+        # observation of what is on disk, so half an import is more truthful
         # than none, and a rebuild would say exactly the same thing.
-        index.put(filed)
+        index.put(row)
         library.save(root, index)
 
     rom_path = (os.path.join(library.roms_dir(root), written["rom"])
                 if "rom" in written else "")
     dump_path = (os.path.join(library.dumps_dir(root), written["dump"])
                  if "dump" in written else "")
-    return Filing(proposal, ok=not problem and len(written) == 2,
-                  row=filed if written else None,
+    return Import(proposal, ok=not problem and len(written) == 2,
+                  row=row if written else None,
                   rom_path=rom_path, dump_path=dump_path,
+                  cartsave_path=cartsave_path,
                   verified=verified and bool(written), problem=problem)
 
 
-def remove_from_card(filing: Filing) -> Filing:
+def match_save(save: Save, index: library.Index) -> library.Row | None:
+    """The imported dump a stranded save belongs to, or None.
+
+    A save is paired to the ROM beside it on the card, and that fails the
+    moment the ROM is cleared from the card while its save is left, which is
+    the ordinary end state of importing a cartridge. The index still knows:
+    it records the name the core gave the ROM, and the core gives both files
+    of one cartridge the same stem.
+
+    This is how ZEROMISSIONE.sav finds Metroid - Zero Mission (USA,
+    Australia).gba with no .gba anywhere near it.
+    """
+    for row in index:
+        if row.dump and os.path.splitext(row.dump)[0] == save.stem:
+            return row
+    return None
+
+
+def unseen_cartridge_saves(card_root: str, root: str,
+                           index: library.Index) -> list[tuple[Save, library.Row]]:
+    """Saves on the card whose cartridge is imported but whose bytes are not.
+
+    The dumper's own output, read from where the dumper writes it, which is
+    the whole point and is what an earlier version of this got wrong: it read
+    /Saves/cartdumps instead, where the Pocket keeps what an emulated core
+    wrote, and filed a 64 KB padded emulator save as a 32 KiB cartridge read.
+    """
+    out = []
+    for save in scan_saves(card_root):
+        row = match_save(save, index)
+        if row is not None and _unseen_save(save, root, row.rom):
+            out.append((save, row))
+    return out
+
+
+def import_cartridge_save(save: Save, row: library.Row,
+                          root: str) -> tuple[str, str]:
+    """Keep one save the dumper wrote. (path, problem)."""
+    if not row.rom:
+        return "", "that dump has no name in the library"
+    return _place_cartsave(save, root, row.rom, library.CART)
+
+
+def _unseen_save(save: Save | None, root: str,
+                 rom_name: str | None) -> bool:
+    """True if `save` holds bytes this cartridge has no read of yet."""
+    if save is None or not rom_name:
+        return False
+    try:
+        sha1 = library.sha1_of(save.path)
+    except OSError:
+        return False
+    folder = library.cartsave_dir(root, rom_name)
+    for name in library.cartsave_reads(root, rom_name):
+        try:
+            if library.sha1_of(os.path.join(folder, name)) == sha1:
+                return False
+        except OSError:
+            continue
+    return True
+
+
+def _place_cartsave(save: Save, root: str, rom_name: str,
+                    origin: str = library.CART) -> tuple[str, str]:
+    """Copy one save read into cartsaves/<rom>/<day>.sav. (path, problem).
+
+    Immutable: an existing file at that path is compared rather than written
+    over, so re-importing the same card twice costs a comparison, and two
+    reads that differ on one day are both kept under separate names. Nothing
+    here ever overwrites a save, because a save is the one file in this
+    library that cannot be re-derived from anything else.
+    """
+    try:
+        sha1 = library.sha1_of(save.path)
+    except OSError as e:
+        return "", f"cannot read {save.name}: {e}"
+    dest = library.cartsave_dest(root, rom_name, _today(), sha1, origin)
+    if os.path.exists(dest):
+        return dest, ""
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+    except OSError as e:
+        return "", f"cannot make the save directory: {e}"
+    why = _place(save.path, dest)
+    return ("", why) if why else (dest, "")
+
+
+def remove_from_card(imported: Import) -> Import:
     """Delete the card original, and only after comparing the bytes again.
 
     The only destructive step in the feature, so the check in front of it is
@@ -701,20 +937,369 @@ def remove_from_card(filing: Filing) -> Filing:
     card is removable. If it went away in the meantime, or came back as a
     different card, this refuses instead of deleting.
     """
-    if not filing.ok or not filing.dump_path:
-        return replace(filing, problem=filing.problem or "nothing was filed")
-    source = filing.proposal.dump.path
+    if not imported.ok or not imported.dump_path:
+        return replace(imported, problem=imported.problem or "nothing was imported")
+    source = imported.proposal.dump.path
     if not os.path.exists(source):
-        return replace(filing, removed=False, problem="the card file is gone")
-    if not same_bytes(source, filing.dump_path):
-        return replace(filing, removed=False,
-                       problem=f"{filing.dump_path} does not match the card; "
+        return replace(imported, removed=False, problem="the card file is gone")
+    if not same_bytes(source, imported.dump_path):
+        return replace(imported, removed=False,
+                       problem=f"{imported.dump_path} does not match the card; "
                                "nothing was removed")
     try:
         os.remove(source)
     except OSError as e:
-        return replace(filing, removed=False, problem=f"cannot remove: {e}")
-    return replace(filing, removed=True, problem="")
+        return replace(imported, removed=False, problem=f"cannot remove: {e}")
+    return replace(imported, removed=True, problem="")
+
+
+def cartsave_reads(root: str, row: library.Row) -> list[str]:
+    """The save reads kept for one imported dump, newest last."""
+    return library.cartsave_reads(root, row.rom) if row.rom else []
+
+
+@dataclass(frozen=True)
+class CartSave:
+    """One save read in the library, as a thing rather than as a filename.
+
+    `label` is the only field a person chose and the only one not derivable
+    from the file, which is why it comes from prefs and everything else comes
+    from the bytes. `title` is what to put in front of somebody: the label
+    when there is one, the day it was read when there is not.
+    """
+    path: str
+    name: str                 # the filename under cartsaves/<rom>/
+    sha1: str
+    size: int
+    day: str                  # the date in the filename, not the file's mtime
+    origin: str = library.CART
+    label: str = ""
+
+    @property
+    def from_cartridge(self) -> bool:
+        return self.origin == library.CART
+
+    @property
+    def where(self) -> str:
+        """One word for the column: what wrote these bytes."""
+        return "cartridge" if self.from_cartridge else "Pocket"
+
+    @property
+    def title(self) -> str:
+        return self.label or self.day
+
+    @property
+    def named(self) -> bool:
+        return bool(self.label)
+
+
+def cartsaves(root: str, row: library.Row) -> list[CartSave]:
+    """Every save read kept for one dump, oldest first, named where named.
+
+    Unreadable files are skipped rather than reported as empty ones: a save
+    whose bytes cannot be read has no identity, and giving it a blank SHA-1
+    would let two of them collide into one record.
+    """
+    if not row.rom:
+        return []
+    folder = library.cartsave_dir(root, row.rom)
+    out = []
+    for name in library.cartsave_reads(root, row.rom):
+        full = os.path.join(folder, name)
+        try:
+            sha1 = library.sha1_of(full)
+            size = os.path.getsize(full)
+        except OSError as e:
+            say.err(f"cannot read {full}: {e}")
+            continue
+        day, origin = library.cartsave_parts(name)
+        out.append(CartSave(path=full, name=name, sha1=sha1, size=size,
+                            day=day, origin=origin,
+                            label=prefs.get_save_name(sha1) or ""))
+    return out
+
+
+def name_cartsave(save: CartSave, text: str | None) -> None:
+    """Name a save read, or with None forget the name."""
+    prefs.set_save_name(save.sha1, text)
+
+
+def restore_save(root: str, row: library.Row, rom_on_card: str,
+                 which: str = "") -> tuple[str, str]:
+    """Put a save read back beside a dump on the card. (path, problem).
+
+    This is the reverse of the import, and the whole point of taking the save
+    off the cartridge: the Pocket reads Saves/cartdumps/<pid>/<name>.sav for a
+    ROM at Assets/cartdumps/<pid>/<name>.<ext>, so a save written there is the
+    cartridge's own save, in the emulated core, under the name the ROM was
+    imported as.
+
+    `which` names one of cartsave_reads(); the newest is used when it is
+    empty. Through a temporary file and a replace, because a half-written save
+    the Pocket then loads is worse than no save.
+    """
+    reads = cartsave_reads(root, row)
+    if not reads:
+        return "", "no save was imported for this dump"
+    name = which or reads[-1]
+    if name not in reads:
+        return "", f"{name} is not one of this dump's save reads"
+    src = os.path.join(library.cartsave_dir(root, row.rom), name)
+    dest = card.save_beside(rom_on_card)
+    # Refuse a size mismatch rather than warn about one. A save is read back
+    # into a fixed region and a file of the wrong length is not a worse save,
+    # it is a different cartridge's: the sizes come in a handful of discrete
+    # steps and two that disagree cannot both be right for one game. Only
+    # checked when something is already there, because the first restore has
+    # nothing to disagree with.
+    if os.path.exists(dest):
+        try:
+            there, here = os.path.getsize(dest), os.path.getsize(src)
+        except OSError as e:
+            return "", f"cannot compare with the save on the card: {e}"
+        if there != here:
+            return "", (f"{name} is {here:,} bytes and the save already on "
+                        f"the card is {there:,}. Nothing was written: a save "
+                        "of the wrong length belongs to a different game.")
+    tmp = dest + ".part"
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copyfile(src, tmp)
+        os.replace(tmp, dest)
+    except OSError as e:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return "", f"could not write the save to the card: {e}"
+    return dest, ""
+
+
+def card_save_of(card_root: str, row: library.Row) -> str | None:
+    """The save the Pocket keeps for this dump, if there is one.
+
+    The Pocket writes it as you play, so this file is the live one and the
+    library's reads are history. It is the same path restore_save() writes to,
+    asked from the other direction.
+    """
+    if not row.rom or not row.system:
+        return None
+    rom_on_card = os.path.join(card.cartdumps_dir(card_root, row.system),
+                               row.rom)
+    try:
+        path = card.save_beside(rom_on_card)
+    except ValueError:
+        return None
+    return path if os.path.isfile(path) else None
+
+
+def live_read(root: str, row: library.Row, card_root: str) -> str | None:
+    """Which of this cartridge's reads is the one on the card, by hash.
+
+    Answered from the bytes rather than from a note kept somewhere, because
+    the Pocket writes that file without telling anybody and a note would go
+    stale the first time you played. None means the card's save matches no
+    read in the library, which is the state worth acting on: it is progress
+    that exists nowhere else.
+    """
+    live = card_save_of(card_root, row)
+    if live is None or not row.rom:
+        return None
+    try:
+        sha1 = library.sha1_of(live)
+    except OSError:
+        return None
+    folder = library.cartsave_dir(root, row.rom)
+    for name in library.cartsave_reads(root, row.rom):
+        try:
+            if library.sha1_of(os.path.join(folder, name)) == sha1:
+                return name
+        except OSError:
+            continue
+    return None
+
+
+def card_saves_for(card_root: str, root: str, row: library.Row,
+                   index: library.Index) -> list[tuple[Save, str]]:
+    """Saves on the card for one cartridge that the library does not hold.
+
+    Both kinds, each labelled, because the card carries two and they are not
+    the same thing: what the dumper read off the chip, in
+    /Assets/carttools/common, and what an emulated core wrote while somebody
+    played, in /Saves/cartdumps. Reading only the second one is the defect
+    this function exists to make impossible to repeat.
+    """
+    out: list[tuple[Save, str]] = []
+    if not row.rom:
+        return out
+    for save in scan_saves(card_root):
+        # By SHA-1, not by object identity: `index` is loaded fresh here and
+        # `row` came from somewhere else, so the two are never the same Row
+        # even when they describe the same dump.
+        hit = match_save(save, index)
+        if hit is not None and hit.sha1 == row.sha1 \
+                and _unseen_save(save, root, row.rom):
+            out.append((save, library.CART))
+    live = card_save_of(card_root, row)
+    if live is not None:
+        played = Save(path=live, name=os.path.basename(live),
+                      size=os.path.getsize(live))
+        if _unseen_save(played, root, row.rom):
+            out.append((played, library.POCKET))
+    return out
+
+
+def read_card_saves(card_root: str, root: str, row: library.Row,
+                    index: library.Index) -> tuple[list[str], list[str]]:
+    """Keep every card save this cartridge is missing. (paths, problems)."""
+    kept, problems = [], []
+    for save, origin in card_saves_for(card_root, root, row, index):
+        path, why = _place_cartsave(save, root, row.rom, origin)
+        if path:
+            kept.append(path)
+        else:
+            problems.append(f"{save.name}: {why}")
+    return kept, problems
+
+
+def capture_save(root: str, row: library.Row,
+                 card_root: str) -> tuple[str, str]:
+    """Take the card's current save into the library as a read. (path, note).
+
+    The other half of restore_save(). A save restored to the card and then
+    played on is no longer any read the library holds, and nothing else would
+    ever bring that state back: the Pocket does not write to the library and
+    the cartridge it came off has moved on. Dated like every other read and
+    never overwriting one, so capturing twice in a day keeps both.
+
+    An unchanged save is not an error and writes nothing. It is the ordinary
+    case for a card that has been read but not played.
+    """
+    live = card_save_of(card_root, row)
+    if live is None:
+        return "", "no save for this dump on the card"
+    if not row.rom:
+        return "", "this dump has no name in the library"
+    already = live_read(root, row, card_root)
+    if already:
+        return "", f"the card's save is already kept, as {already}"
+    save = Save(path=live, name=os.path.basename(live),
+                size=os.path.getsize(live))
+    path, why = _place_cartsave(save, root, row.rom, library.POCKET)
+    return (path, "") if path else ("", why)
+
+
+# ------------------------------------------------- taking things back out --
+#
+# The library is a safety copy, so removing from it is the one direction with
+# no undo. Both functions below therefore say what would be lost before they
+# are called, and neither guesses: `elsewhere` is answered by hashing what is
+# actually on the card rather than by assuming a card copy still exists.
+#
+# There was no way to do this at all until a save was filed wrongly and had to
+# be deleted from a shell. A library you can only add to is not a library.
+
+
+def cartsave_elsewhere(save: CartSave, card_root: str,
+                       row: library.Row) -> str:
+    """A path on the card holding these exact bytes, or "".
+
+    Answered by hashing, because "there is a copy on the card" is exactly the
+    sort of thing that is true right up until somebody swaps the card.
+    """
+    if not card_root:
+        return ""
+    # The two places a save for this cartridge can be: what the dumper wrote,
+    # and what an emulated core wrote. Named explicitly rather than searched,
+    # so this cannot quietly match some other cartridge's identical bytes.
+    candidates = []
+    if row.dump:
+        candidates.append(os.path.join(
+            dump_dir(card_root), os.path.splitext(row.dump)[0] + SAVE_EXT))
+    played = card_save_of(card_root, row)
+    if played:
+        candidates.append(played)
+    for path in candidates:
+        if not os.path.isfile(path):
+            continue
+        try:
+            if library.sha1_of(path) == save.sha1:
+                return path
+        except OSError:
+            continue
+    return ""
+
+
+def forget_cartsave(save: CartSave) -> str:
+    """Delete one save read and the name given to it. "" or a problem.
+
+    The name goes with the file. Leaving it behind would mean a later read
+    with the same bytes silently inheriting a name nobody gave it.
+    """
+    try:
+        os.remove(save.path)
+    except OSError as e:
+        return f"cannot remove {save.name}: {e}"
+    prefs.set_save_name(save.sha1, None)
+    folder = os.path.dirname(save.path)
+    try:
+        if not os.listdir(folder):
+            os.rmdir(folder)
+    except OSError:
+        pass                    # a directory that will not go is not a fault
+    return ""
+
+
+@dataclass(frozen=True)
+class Loss:
+    """What removing one imported dump from the library would destroy."""
+    rom: str = ""
+    dump: str = ""
+    saves: int = 0
+    on_card: bool = False       # the card still holds the dump's own bytes
+
+    @property
+    def anything(self) -> bool:
+        return bool(self.rom or self.dump or self.saves)
+
+
+def what_removing_costs(root: str, row: library.Row,
+                        card_root: str = "") -> Loss:
+    """What `forget_dump` would delete, for a confirmation to quote."""
+    rom = row.rom_path(root)
+    dump = row.dump_path(root)
+    on_card = False
+    if card_root and row.dump:
+        on_card = os.path.isfile(os.path.join(dump_dir(card_root), row.dump))
+    return Loss(rom=rom if rom and os.path.isfile(rom) else "",
+                dump=dump if dump and os.path.isfile(dump) else "",
+                saves=len(cartsave_reads(root, row)),
+                on_card=on_card)
+
+
+def forget_dump(root: str, row: library.Row,
+                index: library.Index) -> list[str]:
+    """Remove one dump from the library entirely. A list of problems.
+
+    The ROM, the original under cart-dumps, every save read kept for it, and
+    the index row. The card is not touched: this is about the library, and a
+    dump still on the card is the thing that makes removing it recoverable.
+    """
+    problems = []
+    for save in cartsaves(root, row):
+        why = forget_cartsave(save)
+        if why:
+            problems.append(why)
+    for path in (row.rom_path(root), row.dump_path(root)):
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            os.remove(path)
+        except OSError as e:
+            problems.append(f"cannot remove {os.path.basename(path)}: {e}")
+    index.drop(row.sha1)
+    library.save(root, index)
+    return problems
 
 
 def same_bytes(a: str, b: str) -> bool:
@@ -744,8 +1329,9 @@ def same_bytes(a: str, b: str) -> bool:
 
 def row_for(dump: Dump, identity: Identity, rom: str | None = None,
             dump_name: str | None = None,
-            was: library.Row | None = None) -> library.Row:
-    """The index row for a filed dump. Observations only.
+            was: library.Row | None = None,
+            cartsaves: str | None = None) -> library.Row:
+    """The index row for an imported dump. Observations only.
 
     Every field here is something a rebuild can ask again: the hashes off the
     bytes, the names off the directory listing, the last four off the DAT.
@@ -755,10 +1341,10 @@ def row_for(dump: Dump, identity: Identity, rom: str | None = None,
     """
     return library.Row(
         sha1=dump.sha1, size=dump.size, crc32=dump.crc32,
-        # The earliest date the library ever saw these bytes. Re-filing a dump
-        # whose copy went missing is not the day it entered the library.
-        filed=(was.filed if was and was.filed else _today()),
-        rom=rom, dump=dump_name,
+        # The earliest date the library ever saw these bytes. Re-importing a
+        # dump whose copy went missing is not the day it entered the library.
+        imported=(was.imported if was and was.imported else _today()),
+        rom=rom, dump=dump_name, cartsaves=cartsaves,
         title=identity.title, system=identity.system or None,
         region=identity.region, clone_of=identity.parent)
 
@@ -913,7 +1499,7 @@ def cheat(identity: Identity, rom_path: str | None = None) -> Cheat:
 
 
 def set_cheat(rom_path: str, cht_path: str | None) -> None:
-    """Pin a cheat file to a filed dump, or forget the pin.
+    """Pin a cheat file to an imported dump, or forget the pin.
 
     A decision, so it goes where the app keeps decisions, through the same call
     a ROM on the card uses. Nothing about it belongs in the index.
@@ -929,6 +1515,11 @@ class Survey:
     root: str
     proposals: list[Proposal]
     note: str = ""            # which DATs were searched
+    # Saves on the card with no ROM of the same stem beside them. Surfaced
+    # rather than swallowed: it means the ROM was imported and its card copy
+    # removed while the save was left, which is recoverable, and guessing
+    # which cartridge it belongs to is not this module's business.
+    unpaired: list[Save] = field(default_factory=list)
 
     @property
     def pending(self) -> list[Proposal]:
@@ -952,11 +1543,11 @@ class Survey:
         if not total:
             return "No dumps on the card."
         if self.quiet:
-            filed = self.counted(Verdict.FILED)
+            done = self.counted(Verdict.IMPORTED)
             turned = self.counted(Verdict.REJECTED)
-            parts = [f"{filed} already filed"] if filed else []
+            parts = [f"{done} already imported"] if done else []
             if turned:
-                parts.append(f"{turned} turned down before")
+                parts.append(f"{turned} ignored")
             return (f"Nothing to do: {total} dump{'s' if total > 1 else ''}, "
                     + " and ".join(parts) + ".")
         return (f"{len(self.pending)} of {total} "
@@ -974,7 +1565,15 @@ def survey(card_root: str, root: str, catalog: nointro.Catalog,
     """
     if index is None:
         index = library.load(root)
+    # Paired by stem, which is the only link the core leaves between the two
+    # files it writes for one cartridge. A save whose stem matches no ROM is
+    # not paired to anything and is reported by unpaired_saves() instead of
+    # being attached to whichever dump happens to be nearest.
+    saves = {sv.stem: sv for sv in scan_saves(card_root)}
     proposals = [propose(d, identify(d, catalog), root, index,
-                         offer_rejected=offer_rejected)
+                         offer_rejected=offer_rejected, save=saves.get(d.stem))
                  for d in scan(card_root)]
-    return Survey(card_root, root, proposals, dat_note(catalog))
+    paired = {p.save.stem for p in proposals if p.save is not None}
+    return Survey(card_root, root, proposals, dat_note(catalog),
+                  unpaired=[sv for stem, sv in sorted(saves.items())
+                            if stem not in paired])

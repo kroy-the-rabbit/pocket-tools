@@ -13,7 +13,9 @@ from dataclasses import dataclass
 
 import cheatfile
 import match
+import library
 import prefs
+import say
 import writer
 
 
@@ -156,5 +158,51 @@ def load(game, source: str | None = None) -> GameView:
     return GameView(game, source, extra + entries, alternates, pinned)
 
 
+def adopt_pins() -> tuple[int, list[str]]:
+    """Copy every pinned source that lives outside the library into it.
+
+    For pins made before pinning copied anything. Returns how many moved and
+    what went wrong. A pin whose file is already gone is left exactly as it
+    is: it is a record of a choice somebody made, and silently dropping it
+    would lose that without telling anyone.
+    """
+    root = library.path()
+    if not root:
+        return 0, []
+    moved, problems = 0, []
+    for key, path in prefs.all_sources().items():
+        if not path or library.inside(root, path):
+            continue
+        if not os.path.exists(path):
+            problems.append(f"{os.path.basename(path)} is already gone")
+            continue
+        try:
+            prefs.set_source_key(key, library.take_in(root, path))
+            moved += 1
+        except OSError as e:
+            problems.append(f"{os.path.basename(path)}: {e}")
+    return moved, problems
+
+
 def pin(game, cht_path: str | None) -> None:
+    """Remember which cheat source a game uses, and keep a copy of it.
+
+    The path is taken into the library first, so the pin names a file the
+    library owns. Every pin made before this named somewhere else: four in
+    the cheat database cache, which the update button replaces wholesale, and
+    two in a git working tree. Both survive right up until they do not, and
+    the failure is silent -- the source simply stops existing and the game
+    quietly falls back to whatever the matcher likes.
+
+    A library with no path chosen keeps the old behaviour rather than refusing
+    to pin: the pin is still better than nothing, and copy_in() has nowhere to
+    put anything.
+    """
+    root = library.path()
+    if cht_path and root:
+        try:
+            cht_path = library.take_in(root, cht_path)
+        except OSError as e:
+            say.err(f"could not copy {os.path.basename(cht_path)} "
+                    f"into the library: {e}")
     prefs.set_source(game.path, cht_path)
