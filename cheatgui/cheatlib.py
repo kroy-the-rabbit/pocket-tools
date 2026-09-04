@@ -41,8 +41,13 @@ def is_local(path: str) -> bool:
 # would not be a near miss, it would be nonsense. See cheatfile.py.
 #
 # PC Engine shares with nothing, and it has two neighbours it might look like
-# it should: libretro also ships SuperGrafx and PC Engine CD directories, and
-# this core runs neither.
+# it should. libretro ships a SuperGrafx directory, which this core will never
+# run because it drops SuperGrafx for ALM room. It also ships a PC Engine CD
+# directory, and that one is a matter of timing rather than of never: the core
+# reads discs on `cd-streaming` but ships no release that does. When it does,
+# CD gets its own id here rather than joining this tuple, because a HuCard
+# cheat and a CD cheat are written against different games and a near miss
+# across them would be a wrong match, not a helpful one.
 SEARCH = {
     "gbc": ("gbc", "gb"),
     "gb":  ("gb", "gbc"),

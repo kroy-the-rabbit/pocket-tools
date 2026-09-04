@@ -308,8 +308,10 @@ database had. What you do not get is anything this app would have to invent:
 the **Applied** column, and a code store meter. Matching is also restricted to
 that system's own directory: Game Boy and Game Boy Color share a search,
 because a GBC release filed under Game Boy is a near miss worth catching, and
-so is `pce` restricted to its own, since libretro also ships SuperGrafx and
-PC Engine CD directories that this core runs neither of.
+so is `pce` restricted to its own. libretro also ships SuperGrafx and PC
+Engine CD directories: the core will never run SuperGrafx, and it does read
+discs on the `cd-streaming` branch but ships no release that does, so CD is
+unmapped for now and will get its own id rather than being folded in here.
 
 The **Applied** column says how the core makes each cheat take effect, because
 the two ways do not behave the same:

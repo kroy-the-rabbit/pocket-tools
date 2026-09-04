@@ -354,7 +354,9 @@ def latest(repo: str, timeout: int = TIMEOUT) -> dict | None:
     """One repository's newest release, or None when it has none yet.
 
     A repository with no release answers 404, which is an answer rather than a
-    failure: the PC Engine core will be in that state until its first tag.
+    failure. Every core in CORES has a tag now, PC Engine included, so nothing
+    here is expected to answer 404 today; the branch stays because a fork can
+    lose its releases and because a new core is added with none.
     Anything else raises, so being offline still reads as being offline.
     """
     req = urllib.request.Request(

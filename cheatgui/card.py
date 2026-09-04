@@ -112,9 +112,30 @@ KNOWN = {
 #
 # `.sgx` is deliberately not in KNOWN. The PC Engine core drops SuperGrafx to
 # buy the room its cheat engine needs, so a SuperGrafx ROM will not run
-# correctly on it and offering to write cheats for one would be a lie. For the
-# same reason the libretro SuperGrafx and PC Engine CD directories are not
-# mapped: this core runs neither.
+# correctly on it and offering to write cheats for one would be a lie. The
+# libretro `NEC - PC Engine SuperGrafx` directory is not mapped for the same
+# reason.
+#
+# **PC Engine CD is a different case now, and this used to say otherwise.**
+# The core does run discs: `cd-streaming` carries a `Disc (cue)` slot at id
+# 100 and `Disc data` at 101, and Rondo boots from cue plus bin on hardware.
+# It is still off here, and that is a readiness call rather than a capability
+# one:
+#
+#   * no release carries it. The newest PCE tag is v0.9999 and it is HuCard
+#     only, so a .cue on a card today reaches a core that cannot open it.
+#   * only Rondo has been tested. One disc, one game.
+#   * another build comes before that branch can be released at all.
+#
+# Turning it on early would repeat exactly the mistake the Game Boy Advance
+# paragraph above records: a system, a game list and a set of checkboxes that
+# do nothing.
+#
+# **Nothing else has to be built for it.** All 136 files in
+# `NEC - PC Engine CD - TurboGrafx-CD` parse with pce.py unchanged, 667 codes,
+# and every one lands in the 8KB work RAM in_work_ram() already checks. The
+# switch is this entry plus ".cue" in the extension set; see
+# docs/PCE-TG16-PLAN.md for what to confirm on hardware first.
 #
 # **The dumper is not in ENABLED**, and that is not about whether it is
 # released. `carttools` is in KNOWN because the app knows the id and reads the
