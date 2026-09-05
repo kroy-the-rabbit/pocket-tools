@@ -192,6 +192,7 @@ class Surface(unittest.TestCase):
         self.assertFalse(app.dumps_on)
         self.assertEqual(app.dumps_btn.grid_info(), {})
         self.assertEqual(app.copy_btn.winfo_manager(), "")
+        self.assertEqual(app.import_btn.winfo_manager(), "")
         self.assertFalse(app.systems.exists(self.ui.SHELF))
         self.assertTrue(app.systems.get_children(), "the card was not read")
 
@@ -213,6 +214,7 @@ class Surface(unittest.TestCase):
         self.assertTrue(app.dumps_on)
         self.assertNotEqual(app.dumps_btn.grid_info(), {})
         self.assertEqual(app.copy_btn.winfo_manager(), "pack")
+        self.assertEqual(app.import_btn.winfo_manager(), "pack")
         self.assertTrue(app.systems.exists(self.ui.SHELF))
         self.assertEqual(app.systems.item(self.ui.SHELF, "text"),
                          "Cartridge dumps")

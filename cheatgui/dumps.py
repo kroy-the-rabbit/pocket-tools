@@ -407,11 +407,17 @@ class Waiting:
         if self.saves:
             parts.append(f"{self.saves} save{'s' if self.saves > 1 else ''}")
         line = " and ".join(parts) + " on the card."
+        # The saves are answered whenever they were asked, dumps or no
+        # dumps: this line used to fall through to "Cartridge dumps..." the
+        # moment a ROM sat on the card, and twenty new saves went unmentioned
+        # behind forty-one ROMs that were all in the library already.
+        if self.new_saves:
+            return (f"{line} {self.new_saves} save"
+                    f"{'s' if self.new_saves > 1 else ''} not in the library "
+                    "yet. Import saves keeps them; Cartridge dumps... has the "
+                    "rest.")
         if self.dumps or self.new_saves is None:
             return line + " Cartridge dumps... to import them."
-        if self.new_saves:
-            return (f"{line} {self.new_saves} not in the library yet. "
-                    "Cartridge dumps... to import them.")
         return line + " All of them are in the library already."
 
 
@@ -917,6 +923,54 @@ def matched_card_saves(card_root: str, root: str,
         row = match_save(save, index)
         if row is not None:
             out.append((save, row, same_saved_bytes(save, root, row)))
+    return out
+
+
+@dataclass
+class Kept:
+    """What one pass over the card's saves did. Every save accounted for."""
+    kept: list[str] = field(default_factory=list)      # library paths written
+    held: list[str] = field(default_factory=list)      # names already in
+    orphans: list[str] = field(default_factory=list)   # names with no dump in
+    problems: list[str] = field(default_factory=list)
+
+    def summary(self) -> str:
+        parts = [f"{len(self.kept)} kept"]
+        if self.held:
+            parts.append(f"{len(self.held)} already in the library")
+        if self.orphans:
+            parts.append(f"{len(self.orphans)} with no imported dump: "
+                         + ", ".join(self.orphans))
+        if self.problems:
+            parts.append(f"{len(self.problems)} failed")
+        return ", ".join(parts)
+
+
+def import_card_saves(card_root: str, root: str,
+                      index: library.Index) -> Kept:
+    """Every save the dumper left on the card, filed under its dump in one go.
+
+    The association is by the stem the core gave both files, through the
+    index, so a save whose ROM has been cleared from the card still finds its
+    dump. A save already held is left where it is and counted; a save whose
+    dump was never imported is named rather than guessed at, because the
+    place to file it under does not exist yet and importing the dump brings
+    it along as a passenger anyway. Nothing on the card is touched.
+    """
+    out = Kept()
+    for save in scan_saves(card_root):
+        row = match_save(save, index)
+        if row is None:
+            out.orphans.append(save.name)
+            continue
+        if same_saved_bytes(save, root, row):
+            out.held.append(save.name)
+            continue
+        path, why = import_cartridge_save(save, row, root)
+        if path:
+            out.kept.append(path)
+        else:
+            out.problems.append(f"{save.name}: {why}")
     return out
 
 

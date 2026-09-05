@@ -927,6 +927,14 @@ class CartSaveTest(Env):
         self.assertIn("1 cartridge dump and 1 save", w.note())
         self.assertIn("to import them", w.note())
 
+    def test_new_saves_are_named_even_when_dumps_sit_on_the_card(self):
+        # Forty-one ROMs all imported already and twenty new saves: the line
+        # must say twenty, not send you to the dumps window to find out.
+        w = self.dumps.Waiting(dumps=41, saves=27, new_saves=20)
+        self.assertIn("20 saves not in the library yet", w.note())
+        w = self.dumps.Waiting(dumps=41, saves=27, new_saves=0)
+        self.assertNotIn("not in the library", w.note())
+
     # -- importing --------------------------------------------------------
     def imported(self):
         sweep = self.sweep()
@@ -1357,6 +1365,30 @@ class SaveOriginTest(Env):
 
     def index(self):
         return self.lib.load(self.root)
+
+    # -- all of them at once ------------------------------------------------
+    def test_every_card_save_is_filed_under_its_dump_in_one_pass(self):
+        self.put("ZEROMISSIONE.sav", self.chip)
+        self.put("ORPHAN.sav", b"\x00" * 0x2000)
+        os.remove(os.path.join(self.dumps.dump_dir(self.card_root),
+                               "ZEROMISSIONE.gba"))
+        got = self.dumps.import_card_saves(self.card_root, self.root,
+                                           self.index())
+        self.assertEqual(len(got.kept), 1)
+        self.assertTrue(got.kept[0].startswith(
+            self.lib.cartsave_dir(self.root, self.canonical + ".gba")))
+        self.assertEqual(got.orphans, ["ORPHAN.sav"])
+        self.assertEqual(got.held, [])
+        self.assertEqual(got.problems, [])
+        # The card is untouched, and a second pass keeps nothing new.
+        self.assertTrue(os.path.exists(
+            os.path.join(self.dumps.dump_dir(self.card_root),
+                         "ZEROMISSIONE.sav")))
+        again = self.dumps.import_card_saves(self.card_root, self.root,
+                                             self.index())
+        self.assertEqual((again.kept, again.held), ([], ["ZEROMISSIONE.sav"]))
+        self.assertIn("1 kept", got.summary())
+        self.assertIn("ORPHAN.sav", got.summary())
 
     # -- the read that was missing -----------------------------------------
     def test_a_dumper_save_is_found_with_no_rom_beside_it(self):

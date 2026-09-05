@@ -258,6 +258,14 @@ class App(ttk.Frame):
         self.saves_btn = ttk.Button(cartbar, text="Saves...", width=9,
                                     command=self.show_saves, state="disabled")
         self.saves_btn.pack(side="left", padx=(4, 0))
+        # Every save the dumper left on the card, filed under its imported
+        # dump in one press. Saves... above is one cartridge at a time, and
+        # the dumps window is a tick per row; a card that came back from a
+        # dumping session with twenty saves on it wants neither.
+        self.import_btn = ttk.Button(cartbar, text="Import saves", width=13,
+                                     command=self.import_saves,
+                                     state="disabled")
+        self.import_btn.pack(side="left", padx=(4, 0))
         self.cart_open = open_button_for(cartbar, self.cart_dir)
         if self.cart_open is not None:
             self.cart_open.pack(side="left", padx=(4, 0))
@@ -1511,9 +1519,12 @@ class App(ttk.Frame):
                                    before=self.cart_open)
                 self.saves_btn.pack(side="left", padx=(4, 0),
                                     before=self.cart_open)
+                self.import_btn.pack(side="left", padx=(4, 0),
+                                     before=self.cart_open)
             else:
                 self.copy_btn.pack(side="left", padx=(4, 0))
                 self.saves_btn.pack(side="left", padx=(4, 0))
+                self.import_btn.pack(side="left", padx=(4, 0))
             if self.card is not None and not self.systems.exists(SHELF):
                 self.systems.insert("", "end", iid=SHELF,
                                     text="Cartridge dumps",
@@ -1523,6 +1534,7 @@ class App(ttk.Frame):
         self.waiting_label.grid_forget()
         self.copy_btn.pack_forget()
         self.saves_btn.pack_forget()
+        self.import_btn.pack_forget()
         if not self.systems.exists(SHELF):
             return
         showing = self.systems.selection() == (SHELF,)
@@ -1555,6 +1567,33 @@ class App(ttk.Frame):
                                     pady=(2, 0))
         else:
             self.waiting_label.grid_forget()
+        # Live whenever there is a card and a library to file into. Not tied
+        # to the count: the count is a claim about the card, and the button
+        # is the way to check it.
+        self.import_btn.state(
+            ["!disabled"] if (self.card is not None and self.dumps_on
+                              and library.path()) else ["disabled"])
+
+    def import_saves(self) -> None:
+        """File every save the dumper left on the card under its dump."""
+        root = library.path()
+        if self.card is None or not root:
+            messagebox.showinfo("Import saves",
+                                "No card is mounted, or no library is set.")
+            return
+        got = dumps.import_card_saves(self.card.root, root,
+                                      library.load(root))
+        self.waiting = dumps.waiting(self.card.root, root, library.load(root))
+        self.show_waiting()
+        lines = [got.summary()]
+        if got.problems:
+            lines += [""] + got.problems
+        if got.orphans:
+            lines.append("")
+            lines.append("A save with no imported dump is filed when its "
+                         "dump is: Cartridge dumps... imports both.")
+        (messagebox.showwarning if got.problems else messagebox.showinfo)(
+            "Import saves", "\n".join(lines))
 
     def remove_from_library(self) -> None:
         """Delete an imported dump: the ROM, the original, and its saves.

@@ -385,7 +385,19 @@ what happens to it:
 | **Add to library** | copies the dump to your library under its real name, and keeps the core's original beside it as evidence of what was actually produced |
 | **Clear from card** | deletes the card's copy, and only after comparing it byte for byte against the one in your library |
 | **Cheats...** | which libretro cheat file the dump maps to, every alternative, and a way to pin a different one |
-| **Turn down** | pass it over. It doubles as **Offer again**, because a decision you can never take back is a trap rather than a decision |
+| **Ignore** | pass it over. It doubles as **Stop ignoring**, because a decision you can never take back is a trap rather than a decision |
+
+A save the core wrote beside a dump comes into the library with it, filed
+under the cartridge as `cartsaves/<name>/<date> cart.sav`. A save that arrives
+later, or whose ROM you have already cleared from the card, has no dump to
+travel with, so it is handled on its own three ways, all by the stem the core
+gave both files: it is listed in the dumps window under its cartridge, ready
+to tick; **Saves...** on a selected dump has **Read from card** for that one
+cartridge; and **Import saves** on the card line files every save the card
+is carrying under its imported dump in one press, says how many it kept, how
+many were already in, and names any whose dump is not imported yet. Nothing
+on the card is touched by any of the three, and a save is never overwritten:
+two reads that differ are both kept.
 
 Nothing is written for a row you did not tick, and identification is by SHA-1
 against the DAT rather than by the filename or the extension. That matters more
