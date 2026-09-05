@@ -1148,6 +1148,57 @@ class SaveOnlyTest(Env):
     def sweep(self):
         return self.dumps.survey(self.card_root, self.root, self.cat)
 
+    def test_a_shared_stem_is_broken_by_the_header_not_by_order(self):
+        # Link's Awakening (ZELDA.gb, 8 KiB save) and its DX (ZELDA.gbc,
+        # 32 KiB) both title themselves ZELDA. With both imported and neither
+        # ROM on the card, a ZELDA.sav goes to the one whose header says its
+        # save is that size, and a size that fits both or neither goes nowhere.
+        gb = bytearray(self.rom); gb[0x149] = 0x02
+        dx = bytearray(gb_rom(b"ZELDA", cgb=True, filler=b"\x07")); dx[0x149] = 0x03
+        with open(os.path.join(self.lib.roms_dir(self.root),
+                               self.canonical + ".gb"), "wb") as f:
+            f.write(gb)
+        self.put("ZELDA.gbc", bytes(dx))
+        cat = self.catalog(
+            gb=[{"name": self.canonical, "rom": self.canonical + ".gb",
+                 "data": bytes(gb)}],
+            gbc=[{"name": "Link's Awakening DX", "rom": "Link's Awakening DX.gbc",
+                  "data": bytes(dx)}])
+        sweep = self.dumps.survey(self.card_root, self.root, cat)
+        index = self.lib.load(self.root)
+        for prop in sweep.proposals:
+            if prop.dump.name == "ZELDA.gbc":
+                self.dumps.commit(prop, index)
+        self.lib.save(self.root, index)
+        index = self.lib.load(self.root)
+        self.assertEqual(sorted(r.dump for r in index if r.dump),
+                         ["ZELDA.gb", "ZELDA.gbc"])
+        os.remove(os.path.join(self.dumps.dump_dir(self.card_root), "ZELDA.gbc"))
+        os.remove(self.path)
+        small = self.dumps.Save(path=self.put("ZELDA.sav", b"\x11" * 8192),
+                                name="ZELDA.sav", size=8192)
+        big = self.dumps.Save(path=small.path, name="ZELDA.sav", size=32768)
+        odd = self.dumps.Save(path=small.path, name="ZELDA.sav", size=512)
+        self.assertEqual(self.dumps.match_save(small, index, self.root).dump,
+                         "ZELDA.gb")
+        self.assertEqual(self.dumps.match_save(big, index, self.root).dump,
+                         "ZELDA.gbc")
+        self.assertIsNone(self.dumps.match_save(odd, index, self.root))
+        # With the ROM back beside it on the card, the neighbour decides.
+        self.put("ZELDA.gbc", bytes(dx))
+        self.assertEqual(self.dumps.match_save(small, index, self.root).dump,
+                         "ZELDA.gbc")
+
+    def test_a_renamed_save_the_library_already_holds_is_held_not_orphaned(self):
+        data = b"SAVE" + b"\x22" * 0x1FFC
+        self.put("ZELDA.sav", data)
+        self.dumps.import_card_saves(self.card_root, self.root, self.index())
+        os.remove(os.path.join(self.dumps.dump_dir(self.card_root), "ZELDA.sav"))
+        self.put("ZELDA_DX.sav", data)
+        got = self.dumps.import_card_saves(self.card_root, self.root,
+                                           self.index())
+        self.assertEqual((got.orphans, got.held), ([], ["ZELDA_DX.sav"]))
+
     def test_an_imported_rom_with_no_new_save_is_settled(self):
         self.assertIs(self.sweep().proposals[0].verdict,
                       self.dumps.Verdict.IMPORTED)
@@ -1389,6 +1440,58 @@ class SaveOriginTest(Env):
         self.assertEqual((again.kept, again.held), ([], ["ZEROMISSIONE.sav"]))
         self.assertIn("1 kept", got.summary())
         self.assertIn("ORPHAN.sav", got.summary())
+
+    # -- back to the card, all of them -------------------------------------
+    def test_every_newest_read_goes_beside_its_rom_on_the_card_once(self):
+        self.put("ZEROMISSIONE.sav", self.chip)
+        self.dumps.import_card_saves(self.card_root, self.root, self.index())
+        rom = os.path.join(self.card_root, "Assets", "cartdumps", "gba",
+                           self.canonical + ".gba")
+        os.makedirs(os.path.dirname(rom), exist_ok=True)
+        with open(rom, "wb") as f:
+            f.write(b"rom")
+        got = self.dumps.restore_card_saves(self.card_root, self.root,
+                                            self.index())
+        dest = os.path.join(self.card_root, "Saves", "cartdumps", "gba",
+                            self.canonical + ".sav")
+        self.assertEqual(got.written, [dest])
+        with open(dest, "rb") as f:
+            self.assertEqual(f.read(), self.chip)
+        # The Pocket's own save, once there, is never replaced from here.
+        with open(dest, "wb") as f:
+            f.write(b"played")
+        again = self.dumps.restore_card_saves(self.card_root, self.root,
+                                              self.index())
+        self.assertEqual((again.written, again.present),
+                         ([], [self.canonical + ".gba"]))
+        with open(dest, "rb") as f:
+            self.assertEqual(f.read(), b"played")
+        # The plan says so before anything is written.
+        plan = self.dumps.restore_plan(self.card_root, self.root, self.index())
+        self.assertEqual([(p.row.rom, p.present, p.on_card, p.read_size)
+                          for p in plan],
+                         [(self.canonical + ".gba", True, 6, len(self.chip))])
+        # Forced, it is replaced, size be damned: the Pocket's 64 KiB
+        # padding of a 32 KiB read is the ordinary case this is for.
+        forced = self.dumps.restore_card_saves(
+            self.card_root, self.root, self.index(),
+            chosen={self.canonical + ".gba"}, force=True)
+        self.assertEqual((forced.written, forced.replaced),
+                         ([dest], [self.canonical + ".gba"]))
+        with open(dest, "rb") as f:
+            self.assertEqual(f.read(), self.chip)
+        # Chosen narrows; a dump not named is not touched even with force.
+        with open(dest, "wb") as f:
+            f.write(b"played")
+        none = self.dumps.restore_card_saves(
+            self.card_root, self.root, self.index(), chosen=set(), force=True)
+        self.assertEqual(none.written, [])
+        # No ROM on the card, no place for the save.
+        os.remove(rom)
+        gone = self.dumps.restore_card_saves(self.card_root, self.root,
+                                             self.index())
+        self.assertEqual(gone.no_rom, [self.canonical + ".gba"])
+        self.assertIn("1 written", got.summary())
 
     # -- the read that was missing -----------------------------------------
     def test_a_dumper_save_is_found_with_no_rom_beside_it(self):

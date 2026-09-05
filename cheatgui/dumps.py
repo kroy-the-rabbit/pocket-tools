@@ -870,7 +870,28 @@ def commit(proposal: Proposal, index: library.Index,
                   verified=verified and bool(written), problem=problem)
 
 
-def match_save(save: Save, index: library.Index) -> library.Row | None:
+# Game Boy header byte 0x149: the save RAM the cartridge carries, in bytes.
+# The core dumps exactly this many, so it is what a .sav of the game weighs.
+_GB_RAM_AT = 0x149
+_GB_RAM = {0x00: 0, 0x01: 2048, 0x02: 8192, 0x03: 32768,
+           0x04: 131072, 0x05: 65536}
+
+
+def _gb_save_bytes(rom_path: str | None) -> int | None:
+    """How big this Game Boy ROM's save is, from its header, or None."""
+    if not rom_path:
+        return None
+    try:
+        with open(rom_path, "rb") as f:
+            f.seek(_GB_RAM_AT)
+            code = f.read(1)
+    except OSError:
+        return None
+    return _GB_RAM.get(code[0]) if code else None
+
+
+def match_save(save: Save, index: library.Index,
+               root: str = "") -> library.Row | None:
     """The imported dump a stranded save belongs to, or None.
 
     A save is paired to the ROM beside it on the card, and that fails the
@@ -881,10 +902,56 @@ def match_save(save: Save, index: library.Index) -> library.Row | None:
 
     This is how ZEROMISSIONE.sav finds Metroid - Zero Mission (USA,
     Australia).gba with no .gba anywhere near it.
+
+    **A stem is not always one cartridge.** Link's Awakening and Link's
+    Awakening DX both title themselves ZELDA, so a card that has had both
+    through it holds ZELDA.gb and ZELDA.gbc, and a ZELDA.sav with neither
+    beside it could be either. Taking the first row filed the 8 KiB GB save
+    under the DX row. So a tie is broken, in order: by the ROM still beside
+    the save on the card, then by the save's length against each ROM's own
+    header, which names its save RAM size. A tie nothing breaks is None: an
+    unfiled save is recoverable and a misfiled one is a wrong claim.
     """
+    rows = [r for r in index
+            if r.dump and os.path.splitext(r.dump)[0] == save.stem]
+    if len(rows) <= 1:
+        return rows[0] if rows else None
+    beside = [r for r in rows
+              if os.path.exists(os.path.join(os.path.dirname(save.path),
+                                             r.dump))]
+    if len(beside) == 1:
+        return beside[0]
+    if root:
+        fits = [r for r in rows
+                if _gb_save_bytes(r.rom_path(root)) == save.size]
+        if len(fits) == 1:
+            return fits[0]
+    return None
+
+
+def held_by(save: Save, root: str,
+            index: library.Index) -> library.Row | None:
+    """The row whose kept reads already include these exact bytes, if any.
+
+    By SHA-1 across every row, for a save no stem can place: a pair renamed
+    on the card by hand, ZELDA_DX.sav beside ZELDA_DX.gbc, matches no row's
+    recorded dump name but its bytes are the DX read the library already
+    holds. Saying "no imported dump" about that is false; this says which.
+    """
+    try:
+        want = library.sha1_of(save.path)
+    except OSError:
+        return None
     for row in index:
-        if row.dump and os.path.splitext(row.dump)[0] == save.stem:
-            return row
+        if not row.rom:
+            continue
+        folder = library.cartsave_dir(root, row.rom)
+        for name in library.cartsave_reads(root, row.rom):
+            try:
+                if library.sha1_of(os.path.join(folder, name)) == want:
+                    return row
+            except OSError:
+                continue
     return None
 
 
@@ -899,7 +966,7 @@ def unseen_cartridge_saves(card_root: str, root: str,
     """
     out = []
     for save in scan_saves(card_root):
-        row = match_save(save, index)
+        row = match_save(save, index, root)
         if row is not None and _unseen_save(save, root, row.rom):
             out.append((save, row))
     return out
@@ -920,7 +987,7 @@ def matched_card_saves(card_root: str, root: str,
     """
     out = []
     for save in scan_saves(card_root):
-        row = match_save(save, index)
+        row = match_save(save, index, root)
         if row is not None:
             out.append((save, row, same_saved_bytes(save, root, row)))
     return out
@@ -959,9 +1026,12 @@ def import_card_saves(card_root: str, root: str,
     """
     out = Kept()
     for save in scan_saves(card_root):
-        row = match_save(save, index)
+        row = match_save(save, index, root)
         if row is None:
-            out.orphans.append(save.name)
+            if held_by(save, root, index) is not None:
+                out.held.append(save.name)
+            else:
+                out.orphans.append(save.name)
             continue
         if same_saved_bytes(save, root, row):
             out.held.append(save.name)
@@ -1125,8 +1195,126 @@ def name_cartsave(save: CartSave, text: str | None) -> None:
     prefs.set_save_name(save.sha1, text)
 
 
+@dataclass(frozen=True)
+class Plan:
+    """One dump's newest read and where on the card it would go.
+
+    Shown before anything is written, so the person can see what the Pocket
+    already has and decide row by row. `on_card` is the size of the save the
+    Pocket holds there, None when it holds none; a size that differs from
+    the read is the usual GBA case, the Pocket padding a 32 KiB SRAM read out
+    to its 64 KiB slot, and is what a forced restore writes over.
+    """
+    row: library.Row
+    read: str                     # the newest read's filename in cartsaves/
+    read_size: int
+    rom_on_card: str | None       # None: the ROM is not on the card
+    dest: str
+    on_card: int | None           # size of the Pocket's save there, or None
+
+    @property
+    def present(self) -> bool:
+        return self.on_card is not None
+
+    @property
+    def missing_rom(self) -> bool:
+        return self.rom_on_card is None
+
+
+def restore_plan(card_root: str, root: str,
+                 index: library.Index) -> list[Plan]:
+    """Every dump that has a save read, and what restoring it would do."""
+    out = []
+    for row in index:
+        if not row.rom:
+            continue
+        reads = cartsave_reads(root, row)
+        if not reads:
+            continue
+        read = reads[-1]
+        try:
+            size = os.path.getsize(
+                os.path.join(library.cartsave_dir(root, row.rom), read))
+        except OSError:
+            continue
+        rom_on_card = os.path.join(card.cartdumps_dir(card_root,
+                                                      row.system or ""),
+                                   row.rom)
+        dest = card.save_beside(rom_on_card)
+        on_card = None
+        try:
+            on_card = os.path.getsize(dest)
+        except OSError:
+            pass
+        out.append(Plan(row, read, size,
+                        rom_on_card if os.path.exists(rom_on_card) else None,
+                        dest, on_card))
+    return out
+
+
+@dataclass
+class Restored:
+    """What one pass over the library's saves did to the card."""
+    written: list[str] = field(default_factory=list)   # card paths written
+    replaced: list[str] = field(default_factory=list)  # of those, over one
+    present: list[str] = field(default_factory=list)   # left alone
+    no_rom: list[str] = field(default_factory=list)    # ROM not on the card
+    problems: list[str] = field(default_factory=list)
+
+    def summary(self) -> str:
+        parts = [f"{len(self.written)} written"]
+        if self.replaced:
+            parts.append(f"{len(self.replaced)} of them over a save the "
+                         "Pocket had")
+        if self.present:
+            parts.append(f"{len(self.present)} left alone, the card already "
+                         "has a save there")
+        if self.no_rom:
+            parts.append(f"{len(self.no_rom)} whose ROM is not on the card")
+        if self.problems:
+            parts.append(f"{len(self.problems)} failed")
+        return ", ".join(parts)
+
+
+def restore_card_saves(card_root: str, root: str, index: library.Index,
+                       chosen: "set[str] | None" = None,
+                       force: bool = False) -> Restored:
+    """Put dumps' newest reads beside their ROMs on the card.
+
+    The mirror of import_card_saves. `chosen` names the dumps to act on by
+    their ROM name; None means every dump whose ROM is on the card and whose
+    save slot there is empty, which is the safe pass. A file already in
+    Saves/cartdumps is what the Pocket wrote the last time the game ran, so
+    it is left alone unless `force` says otherwise, and then it is replaced
+    whatever its size: the Pocket pads a GBA read out to its own slot, so a
+    size that differs there is not a different game, it is the same game as
+    the Pocket keeps it. A dump whose ROM is not on the card has nowhere for
+    its save to go and is counted, not guessed at.
+    """
+    out = Restored()
+    for plan in restore_plan(card_root, root, index):
+        rom = plan.row.rom or ""
+        if chosen is not None and rom not in chosen:
+            continue
+        if plan.missing_rom:
+            out.no_rom.append(rom)
+            continue
+        if plan.present and not force:
+            out.present.append(rom)
+            continue
+        where, why = restore_save(root, plan.row, plan.rom_on_card,
+                                  force=force)
+        if where:
+            out.written.append(where)
+            if plan.present:
+                out.replaced.append(rom)
+        else:
+            out.problems.append(f"{rom}: {why}")
+    return out
+
+
 def restore_save(root: str, row: library.Row, rom_on_card: str,
-                 which: str = "") -> tuple[str, str]:
+                 which: str = "", force: bool = False) -> tuple[str, str]:
     """Put a save read back beside a dump on the card. (path, problem).
 
     This is the reverse of the import, and the whole point of taking the save
@@ -1153,7 +1341,7 @@ def restore_save(root: str, row: library.Row, rom_on_card: str,
     # steps and two that disagree cannot both be right for one game. Only
     # checked when something is already there, because the first restore has
     # nothing to disagree with.
-    if os.path.exists(dest):
+    if os.path.exists(dest) and not force:
         try:
             there, here = os.path.getsize(dest), os.path.getsize(src)
         except OSError as e:
@@ -1237,7 +1425,7 @@ def card_saves_for(card_root: str, root: str, row: library.Row,
         # By SHA-1, not by object identity: `index` is loaded fresh here and
         # `row` came from somewhere else, so the two are never the same Row
         # even when they describe the same dump.
-        hit = match_save(save, index)
+        hit = match_save(save, index, root)
         if hit is not None and hit.sha1 == row.sha1 \
                 and _unseen_save(save, root, row.rom):
             out.append((save, library.CART))

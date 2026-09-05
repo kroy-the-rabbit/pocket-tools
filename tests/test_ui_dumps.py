@@ -45,7 +45,7 @@ def labels(widget) -> list[str]:
     return out
 
 
-class Dialog(unittest.TestCase):
+class Fixture(unittest.TestCase):
     """A temporary card, library and config, and the modal tail stubbed out.
 
     The same arrangement the cores and boot ROM dialogs use: __init__ ends in
@@ -172,6 +172,11 @@ class Dialog(unittest.TestCase):
             dlg.flip(path)
 
     # ------------------------------------------------------------- verdicts --
+
+
+class Dialog(Fixture):
+    """The dumps window."""
+
     def test_a_dump_the_dat_knows_is_offered_under_its_real_name(self):
         p = self.put("ZELDA.gb", self.zelda)
         dlg = self.build()
@@ -609,6 +614,66 @@ class Dialog(unittest.TestCase):
         p = self.put("ZELDA.gb", self.zelda)
         self.assertEqual(self.ui.holding(p),
                          self.dumps.dump_dir(self.card))
+
+
+class Restore(Fixture):
+    """Restore saves lists the library's reads against the card and writes
+    only what is ticked; the Pocket's own save is unticked to start with and
+    replaced only on a tick and a yes."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.put("ZELDA.gb", self.zelda)
+        self.put("ZELDA.sav", b"CART" + b"\x11" * 0x1FFC)
+        sweep = self.dumps.survey(self.card, self.lib, self.cat)
+        index = self.library.load(self.lib)
+        done = self.dumps.commit(sweep.proposals[0], index)
+        self.assertTrue(done.ok, done.problem)
+        self.library.save(self.lib, index)
+        self.rom = done.row.rom
+        on_card = os.path.join(self.card, "Assets", "cartdumps", "gb", self.rom)
+        os.makedirs(os.path.dirname(on_card))
+        with open(on_card, "wb") as f:
+            f.write(b"rom")
+        self.dest = os.path.join(self.card, "Saves", "cartdumps", "gb",
+                                 os.path.splitext(self.rom)[0] + ".sav")
+
+    def test_a_dump_with_no_save_on_the_card_is_ticked_and_written(self):
+        dlg = self.ui.RestoreDialog(self.root, self.card, self.lib)
+        self.assertEqual(dlg.ticked(), [self.rom])
+        self.assertIn("no save", dlg.tree.set(self.rom, "card"))
+        dlg.go()
+        with open(self.dest, "rb") as f:
+            self.assertTrue(f.read().startswith(b"CART"))
+        self.assertEqual(self.asked, [])          # nothing was overwritten
+        # Reopened, the row is now the Pocket's and unticked.
+        dlg2 = self.ui.RestoreDialog(self.root, self.card, self.lib)
+        self.assertEqual(dlg2.ticked(), [])
+        self.assertIn("save, 8,192 bytes", dlg2.tree.set(self.rom, "card"))
+
+    def test_overwriting_the_pockets_save_takes_a_tick_and_a_yes(self):
+        os.makedirs(os.path.dirname(self.dest))
+        with open(self.dest, "wb") as f:
+            f.write(b"played")
+        dlg = self.ui.RestoreDialog(self.root, self.card, self.lib)
+        self.assertEqual(dlg.ticked(), [])
+        dlg.tick(missing_only=True)
+        self.assertEqual(dlg.ticked(), [])        # missing only: none missing
+        dlg.tick(missing_only=False)
+        self.assertEqual(dlg.ticked(), [self.rom])
+        self.assertIn("write over", dlg.note.cget("text"))
+        dlg.go()
+        self.assertEqual(len(self.asked), 1)      # the yes was asked for
+        with open(self.dest, "rb") as f:
+            self.assertTrue(f.read().startswith(b"CART"))
+
+    def test_a_dump_whose_rom_is_not_on_the_card_cannot_be_ticked(self):
+        os.remove(os.path.join(self.card, "Assets", "cartdumps", "gb", self.rom))
+        dlg = self.ui.RestoreDialog(self.root, self.card, self.lib)
+        self.assertEqual(dlg.ticked(), [])
+        dlg.tick(missing_only=False)
+        self.assertEqual(dlg.ticked(), [])
+        self.assertIn("not on the card", dlg.tree.set(self.rom, "card"))
 
 
 if __name__ == "__main__":

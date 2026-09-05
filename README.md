@@ -399,6 +399,21 @@ many were already in, and names any whose dump is not imported yet. Nothing
 on the card is touched by any of the three, and a save is never overwritten:
 two reads that differ are both kept.
 
+The way back is **Restore saves**, beside it. It is two steps, because one
+press would have to choose for you. First a list: every dump that has a read,
+the read that would be written, and what the card holds beside that dump's
+ROM now. Rows with no save on the card are ticked to start with; rows where
+the Pocket has already written one are listed unticked with both sizes,
+since that save is what the game last saw. **Tick missing** is that safe set,
+**Tick all** is the whole library over the whole card, for a card being
+rebuilt on purpose, and any row can be ticked by hand. Then **Restore
+ticked** writes them to `Saves/cartdumps/<system>/<name>.sav`, asking once
+more, by name, before it writes over anything the Pocket wrote. A forced
+write ignores the size on the card: the Pocket pads a GBA read out to its own
+slot, so a size that differs there is the same game as the Pocket keeps it.
+**Saves...** on the one dump is still where a particular older read is
+chosen.
+
 Nothing is written for a row you did not tick, and identification is by SHA-1
 against the DAT rather than by the filename or the extension. That matters more
 than it looks: the core tells Game Boy from Game Boy Color using the CGB flag in

@@ -198,16 +198,34 @@ class App(ttk.Frame):
         self.dumps_btn = ttk.Button(top, text="Cartridge dumps...", width=18,
                                     command=self.show_dumps, state="disabled")
         self.dumps_btn.grid(row=0, column=2, padx=(0, 4))
+        # Every save the dumper left on the card, filed under its imported
+        # dump in one press. On the card line because it acts on the card,
+        # not on the selected dump: Saves... under the list is one cartridge
+        # at a time, and the dumps window is a tick per row; a card back from
+        # a dumping session with twenty saves on it wants neither. Gridded
+        # and hidden with Cartridge dumps..., since without the dumper there
+        # is nothing for it to read.
+        self.import_btn = ttk.Button(top, text="Import saves", width=13,
+                                     command=self.import_saves,
+                                     state="disabled")
+        self.import_btn.grid(row=0, column=3, padx=(0, 4))
+        # The mirror: every dump's newest read put beside its ROM on the
+        # card, where the Pocket has none yet. A save the Pocket already
+        # wrote is what the game last saw and is never replaced from here.
+        self.restore_btn = ttk.Button(top, text="Restore saves", width=14,
+                                      command=self.restore_saves,
+                                      state="disabled")
+        self.restore_btn.grid(row=0, column=4, padx=(0, 4))
         self.card_open = open_button_for(
             top, lambda: self.card.root if self.card else None)
         if self.card_open is not None:
-            self.card_open.grid(row=0, column=3, padx=(0, 4))
+            self.card_open.grid(row=0, column=5, padx=(0, 4))
             retune_open(self.card_open, None)   # no card until one is found
         self.rescan_btn = ttk.Button(top, text="Rescan", command=self.rescan)
-        self.rescan_btn.grid(row=0, column=4)
+        self.rescan_btn.grid(row=0, column=6)
         self.eject_btn = ttk.Button(top, text="Eject", width=7,
                                     command=self.eject, state="disabled")
-        self.eject_btn.grid(row=0, column=5, padx=(4, 0))
+        self.eject_btn.grid(row=0, column=7, padx=(4, 0))
         # A second line under the path, because the first one is a path and
         # appending to it would make the two read as one string. Gridded here
         # and shown or hidden by apply_dumps_surface(), so the window has no
@@ -258,14 +276,6 @@ class App(ttk.Frame):
         self.saves_btn = ttk.Button(cartbar, text="Saves...", width=9,
                                     command=self.show_saves, state="disabled")
         self.saves_btn.pack(side="left", padx=(4, 0))
-        # Every save the dumper left on the card, filed under its imported
-        # dump in one press. Saves... above is one cartridge at a time, and
-        # the dumps window is a tick per row; a card that came back from a
-        # dumping session with twenty saves on it wants neither.
-        self.import_btn = ttk.Button(cartbar, text="Import saves", width=13,
-                                     command=self.import_saves,
-                                     state="disabled")
-        self.import_btn.pack(side="left", padx=(4, 0))
         self.cart_open = open_button_for(cartbar, self.cart_dir)
         if self.cart_open is not None:
             self.cart_open.pack(side="left", padx=(4, 0))
@@ -1511,6 +1521,8 @@ class App(ttk.Frame):
         if self.dumps_on:
             self.dumps_btn.grid(row=0, column=2, padx=(0, 4))
             self.dumps_btn.state(["!disabled"] if self.card else ["disabled"])
+            self.import_btn.grid(row=0, column=3, padx=(0, 4))
+            self.restore_btn.grid(row=0, column=4, padx=(0, 4))
             self.show_waiting()
             # Before the Open button, which is where _build put it: pack with
             # no anchor appends, and the bar would come back reordered.
@@ -1519,22 +1531,20 @@ class App(ttk.Frame):
                                    before=self.cart_open)
                 self.saves_btn.pack(side="left", padx=(4, 0),
                                     before=self.cart_open)
-                self.import_btn.pack(side="left", padx=(4, 0),
-                                     before=self.cart_open)
             else:
                 self.copy_btn.pack(side="left", padx=(4, 0))
                 self.saves_btn.pack(side="left", padx=(4, 0))
-                self.import_btn.pack(side="left", padx=(4, 0))
             if self.card is not None and not self.systems.exists(SHELF):
                 self.systems.insert("", "end", iid=SHELF,
                                     text="Cartridge dumps",
                                     values=(len(self.shelf()),))
             return
         self.dumps_btn.grid_forget()
+        self.import_btn.grid_forget()
+        self.restore_btn.grid_forget()
         self.waiting_label.grid_forget()
         self.copy_btn.pack_forget()
         self.saves_btn.pack_forget()
-        self.import_btn.pack_forget()
         if not self.systems.exists(SHELF):
             return
         showing = self.systems.selection() == (SHELF,)
@@ -1563,16 +1573,26 @@ class App(ttk.Frame):
         note = self.waiting.note() if self.card and self.dumps_on else ""
         if note:
             self.waiting_label.config(text=note)
-            self.waiting_label.grid(row=1, column=1, columnspan=5, sticky="w",
+            self.waiting_label.grid(row=1, column=1, columnspan=7, sticky="w",
                                     pady=(2, 0))
         else:
             self.waiting_label.grid_forget()
         # Live whenever there is a card and a library to file into. Not tied
         # to the count: the count is a claim about the card, and the button
         # is the way to check it.
-        self.import_btn.state(
-            ["!disabled"] if (self.card is not None and self.dumps_on
-                              and library.path()) else ["disabled"])
+        live = (["!disabled"] if (self.card is not None and self.dumps_on
+                                  and library.path()) else ["disabled"])
+        self.import_btn.state(live)
+        self.restore_btn.state(live)
+
+    def restore_saves(self) -> None:
+        """Show what restoring would do, row by row, then do what is ticked."""
+        root = library.path()
+        if self.card is None or not root:
+            messagebox.showinfo("Restore saves",
+                                "No card is mounted, or no library is set.")
+            return
+        RestoreDialog(self, self.card.root, root, after=self.card.sync)
 
     def import_saves(self) -> None:
         """File every save the dumper left on the card under its dump."""
@@ -3138,6 +3158,182 @@ class CheatDialog(tk.Toplevel):
         if self.rom_path:
             dumps.set_cheat(self.rom_path, None)
             self.fill(dumps.cheat(self.prop.identity, self.rom_path))
+
+
+class RestoreDialog(tk.Toplevel):
+    """Every dump with a save read, what the card has for it, and a tick.
+
+    Two steps rather than one press, because the one press had to choose
+    for you. The safe choice is ticked to start with: every dump whose ROM
+    is on the card and whose save slot there is empty. A row the Pocket has
+    already written a save for is listed unticked with both sizes, and
+    ticking it is the request to write over what the Pocket has; the button
+    says how many of those are in the set before it writes. **Tick all** is
+    the whole library over the whole card, for a card being rebuilt from the
+    library on purpose.
+    """
+
+    def __init__(self, app, card_root: str, root_dir: str,
+                 after=None) -> None:
+        super().__init__(app)
+        self.app = app
+        self.card_root = card_root
+        self.root_dir = root_dir
+        self.after_write = after
+        self.title("Restore saves to the card")
+        self.transient(app)
+        self.resizable(True, True)
+        self.plans: dict[str, dumps.Plan] = {}
+
+        body = ttk.Frame(self, padding=12)
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(1, weight=1)
+        ttk.Label(body, justify="left", wraplength=560, text=(
+            "Each dump's newest read, and what the card holds beside its "
+            "ROM. Ticked rows are written. A save the Pocket has already "
+            "written is unticked: it is what the game last saw, and ticking "
+            "it writes the library's read over it.")).grid(
+                row=0, column=0, sticky="w", pady=(0, 8))
+
+        cols = ("system", "read", "card")
+        self.tree = ttk.Treeview(body, columns=cols, show="tree headings",
+                                 selectmode="browse", height=14)
+        self.tree.heading("#0", text="Dump")
+        self.tree.heading("system", text="System")
+        self.tree.heading("read", text="Read to write")
+        self.tree.heading("card", text="On the card now")
+        self.tree.column("#0", width=330, stretch=True)
+        self.tree.column("system", width=60, stretch=False, anchor="center")
+        self.tree.column("read", width=200, stretch=False)
+        self.tree.column("card", width=170, stretch=False)
+        self.tree.grid(row=1, column=0, sticky="nsew")
+        self.tree.tag_configure("present", foreground=LESSER)
+        self.tree.tag_configure("norom", foreground="#a00")
+        self.tree.bind("<Button-1>", self.toggle)
+
+        self.note = ttk.Label(body, foreground=QUIET, justify="left")
+        self.note.grid(row=2, column=0, sticky="w", pady=(8, 0))
+
+        bar = ttk.Frame(body)
+        bar.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        ttk.Button(bar, text="Tick missing", width=13,
+                   command=lambda: self.tick(missing_only=True)).pack(
+                       side="left")
+        ttk.Button(bar, text="Tick all", width=9,
+                   command=lambda: self.tick(missing_only=False)).pack(
+                       side="left", padx=(4, 0))
+        ttk.Button(bar, text="Untick all", width=11,
+                   command=self.untick).pack(side="left", padx=(4, 0))
+        self.go_btn = ttk.Button(bar, text="Restore ticked", width=15,
+                                 command=self.go)
+        self.go_btn.pack(side="left", padx=(12, 0))
+        ttk.Button(bar, text="Close", width=8,
+                   command=self.destroy).pack(side="right")
+        self.fill()
+        self.grab_set()
+        self.wait_window()
+
+    # ------------------------------------------------------------- drawing --
+    def fill(self) -> None:
+        self.tree.delete(*self.tree.get_children())
+        self.plans.clear()
+        index = library.load(self.root_dir)
+        for p in dumps.restore_plan(self.card_root, self.root_dir, index):
+            rom = p.row.rom or ""
+            self.plans[rom] = p
+            if p.missing_rom:
+                card_txt, tag, tick = "ROM not on the card", "norom", UNTICK
+            elif p.present:
+                card_txt = f"save, {p.on_card:,} bytes"
+                tag, tick = "present", UNTICK
+            else:
+                card_txt, tag, tick = "no save", "", TICK
+            self.tree.insert("", "end", iid=rom, text=f"{tick} {rom}",
+                             values=(p.row.system or "",
+                                     f"{p.read}  {p.read_size:,} B",
+                                     card_txt),
+                             tags=(tag,) if tag else ())
+        self.retune()
+
+    def retune(self) -> None:
+        on = self.ticked()
+        over = [r for r in on if self.plans[r].present]
+        n = len(on)
+        self.go_btn.config(text=(f"Restore {n} ticked" if n else
+                                 "Restore ticked"))
+        self.go_btn.state(["!disabled"] if n else ["disabled"])
+        if over:
+            self.note.config(foreground="#a00", text=(
+                f"{len(over)} of the ticked rows write over a save the "
+                "Pocket has already written."))
+        else:
+            self.note.config(foreground=QUIET, text=(
+                f"{n} to write, none over an existing save." if n else
+                "Nothing ticked."))
+
+    # -------------------------------------------------------------- ticks --
+    def ticked(self) -> list[str]:
+        return [i for i in self.tree.get_children()
+                if str(self.tree.item(i, "text")).startswith(TICK)]
+
+    def set_tick(self, iid: str, on: bool) -> None:
+        p = self.plans[iid]
+        if p.missing_rom:
+            on = False
+        self.tree.item(iid, text=f"{TICK if on else UNTICK} {iid}")
+
+    def toggle(self, event) -> None:
+        iid = self.tree.identify_row(event.y)
+        if not iid:
+            return
+        if self.plans[iid].missing_rom:
+            self.note.config(foreground="#a00", text=(
+                f"{iid} is not on the card. Copy to card puts the ROM "
+                "there; the save goes beside it."))
+            return
+        self.set_tick(iid, not str(self.tree.item(iid, "text"))
+                      .startswith(TICK))
+        self.retune()
+
+    def tick(self, missing_only: bool) -> None:
+        for iid, p in self.plans.items():
+            self.set_tick(iid, not p.missing_rom
+                          and (not p.present or not missing_only))
+        self.retune()
+
+    def untick(self) -> None:
+        for iid in self.plans:
+            self.set_tick(iid, False)
+        self.retune()
+
+    # -------------------------------------------------------------- acting --
+    def go(self) -> None:
+        chosen = set(self.ticked())
+        if not chosen:
+            return
+        over = sorted(r for r in chosen if self.plans[r].present)
+        if over:
+            names = "\n".join(over[:12])
+            more = f"\nand {len(over) - 12} more" if len(over) > 12 else ""
+            if not messagebox.askyesno(
+                    "Write over the Pocket's saves?",
+                    f"{len(over)} of these have a save on the card that the "
+                    "Pocket wrote. The library's read replaces it and the "
+                    f"Pocket's copy is gone:\n\n{names}{more}\n\nWrite over "
+                    "them?", icon="warning", default="no", parent=self):
+                return
+        got = dumps.restore_card_saves(self.card_root, self.root_dir,
+                                       library.load(self.root_dir),
+                                       chosen=chosen, force=bool(over))
+        if self.after_write is not None:
+            self.after_write()
+        lines = [got.summary()]
+        if got.problems:
+            lines += [""] + got.problems
+        (messagebox.showwarning if got.problems else messagebox.showinfo)(
+            "Restore saves", "\n".join(lines), parent=self)
+        self.fill()
 
 
 class SavesDialog(tk.Toplevel):
