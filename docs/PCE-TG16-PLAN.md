@@ -89,7 +89,7 @@ HuCard cheat matched to a disc would be a wrong match, not a near miss.
 | search | its own directory only, `cheatlib.SEARCH["pcecd"]` |
 | display name | `card.DISPLAY`, not `/Platforms/pce.json`, which names the HuCard |
 | save | the core writes `Saves/pce/common/<cue name>.sav`; `card.save_path` derives the same from the cue path |
-| System Card | slot 0 carries `bios_3_0_usa.pce` with four `alternate_filenames`. `core.wanted()` reads both, and `boot_roms()` accepts any of them |
+| System Card | slot 0 carries `bios_3_0_usa.pce` with four `alternate_filenames`. `core.wanted()` reads both, `boot_roms()` accepts any of them, and `card.scan` leaves every one of those names out of the PC Engine game list: a System Card is a `.pce` in the games folder and it is not a game |
 
 **Not settled, and not claimed:** whether `(SCD)` and `(ACD)` titles in the
 directory run on the core is a core question. The files are offered because

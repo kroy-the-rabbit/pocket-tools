@@ -266,7 +266,7 @@ class Card:
             # The card's own name for the system, now that we are reading it
             # anyway and not holding up the window.
             plat.name = self.platform_name(plat.id)
-            plat.games, plat.cheat_files = self.scan(plat.id)
+            plat.games, plat.cheat_files = self.scan(plat.id, self.hidden(plat.id))
             plat.scanned = True
         return plat
 
@@ -284,8 +284,24 @@ class Card:
         except Exception:                                    # noqa: BLE001
             return DISPLAY.get(pid, pid.upper())
 
-    def scan(self, pid: str) -> tuple[list[Game], frozenset[str]]:
+    def hidden(self, pid: str) -> frozenset[str]:
+        """Basenames in this system's folder that are boot ROMs, not games.
+
+        A System Card is a .pce in Assets/pce/common and the PC Engine core
+        names it, primary and alternates, in its manifest. Asked of core,
+        which owns that knowledge; imported here rather than at the top
+        because core reaches card through db, and a module-level import would
+        close the loop.
+        """
+        import core
+        return core.fixed_names(self.root, folder_of(pid))
+
+    def scan(self, pid: str,
+             hide: frozenset[str] = frozenset()) -> tuple[list[Game], frozenset[str]]:
         """ROMs and the cheat files beside them, from one walk of the tree.
+
+        `hide` is basenames to leave out even though their extension says
+        ROM: the boot ROMs the platform's cores declare. See hidden().
 
         Both come out of the same os.walk deliberately. The directory listing
         already names every file, so asking the filesystem again whether each
@@ -303,6 +319,8 @@ class Card:
                 # Only this system's own files: the walk of a shared folder
                 # meets the other system's too, and they are its to list.
                 if ext in ROM_EXT and SYSTEM_OF_EXT.get(ext) == pid:
+                    if f in hide:
+                        continue
                     found.append(Game(os.path.join(dirpath, f), pid))
                 elif ext == ".cht":
                     chts.add(os.path.join(dirpath, f))
@@ -310,7 +328,7 @@ class Card:
         return found, frozenset(chts)
 
     def games(self, pid: str) -> list[Game]:
-        return self.scan(pid)[0]
+        return self.scan(pid, self.hidden(pid))[0]
 
     def sync(self) -> None:
         """Push writes out of the page cache. Windows does this on close."""

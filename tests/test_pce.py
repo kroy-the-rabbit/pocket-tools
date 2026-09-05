@@ -306,6 +306,32 @@ class DiscsOnTheCard(unittest.TestCase):
                          "poke")
         self.assertTrue(cheatfile.decoded("pcecd"))
 
+    def test_a_system_card_is_not_a_game(self):
+        # bios_3_0_usa.pce is a .pce in the games folder. The core's manifest
+        # names it and its alternates as slot 0's fixed files, so the list
+        # leaves all of them out and keeps the real HuCard.
+        import json
+        for name in ("bios_3_0_usa.pce", "bios_2_0_jap.pce"):
+            with open(os.path.join(self.pce, name), "wb") as f:
+                f.write(b"x" * 16)
+        cdir = os.path.join(self.root, "Cores", "kroy.PCE")
+        os.makedirs(cdir)
+        with open(os.path.join(cdir, "data.json"), "w") as f:
+            json.dump({"data": {"data_slots": [{
+                "name": "Cartridge", "id": 0, "required": True,
+                "filename": "bios_3_0_usa.pce",
+                "alternate_filenames": ["bios_3_0_jap.pce", "bios_2_0_jap.pce"],
+                "extensions": ["pce", "sgx"]}]}}, f)
+        with open(os.path.join(cdir, "core.json"), "w") as f:
+            json.dump({"core": {"metadata": {"version": "0.9999"}}}, f)
+        names = [g.name for g in self.card.Card(self.root).games("pce")]
+        self.assertEqual(names, ["Bonk"])
+        # And through fill(), which is the path the window takes.
+        plat = [p for p in self.card.Card(self.root).platforms()
+                if p.id == "pce"][0]
+        self.card.Card(self.root).fill(plat)
+        self.assertEqual([g.name for g in plat.games], ["Bonk"])
+
     def test_the_disc_has_no_platform_file_to_read(self):
         # /Platforms/pce.json is the HuCard's name; a disc keeps its own.
         os.makedirs(os.path.join(self.root, "Platforms"))

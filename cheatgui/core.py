@@ -278,6 +278,26 @@ def wanted(root: str, core: Core) -> tuple[Rom, ...]:
     return tuple(found)
 
 
+def fixed_names(root: str, platform: str) -> frozenset[str]:
+    """Every fixed-name file any core for this platform wants, by basename.
+
+    A System Card is a .pce file in the games folder, and it is not a game.
+    The card scan asks this so it can leave such files out of the list: the
+    core declares them, this app knows them, and offering cheats for a boot
+    ROM would be a lie. Names come from wanted(), so a core that is not
+    installed still contributes its table entry, and one that is installed
+    contributes what its manifest says, alternates included.
+    """
+    out: set[str] = set()
+    for c in CORES:
+        if c.platform != platform:
+            continue
+        for rom in wanted(root, c):
+            out.add(rom.filename)
+            out.update(rom.alternates)
+    return frozenset(out)
+
+
 def rom_dirs(root: str, core: Core) -> list[str]:
     """Where the Pocket looks for this core's fixed-name files.
 
