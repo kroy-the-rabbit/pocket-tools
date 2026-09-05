@@ -17,12 +17,14 @@ fetch() on a thread and reports progress through the callback.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import shutil
 import ssl
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -311,8 +313,27 @@ _day = day        # the internal name, kept so describe() reads the same
 
 
 # ------------------------------------------------------------------- fetching --
-def _tree(sha: str, timeout: int) -> dict[str, str]:
-    """Blob paths to their names, for both directories, at one commit."""
+def manifest_file() -> str:
+    return os.path.join(store(), "manifest.json")
+
+
+def _manifest() -> dict[str, str]:
+    """"<dir>/<name>" -> blob sha of the copy in the store, if recorded."""
+    try:
+        with open(manifest_file()) as f:
+            m = json.load(f)
+        return m if isinstance(m, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _tree(sha: str, timeout: int) -> dict[str, list[tuple[str, str]]]:
+    """Directory -> [(name, blob sha)] for every cheat file, at one commit.
+
+    The blob sha is kept because it is what makes an update cheap: a file
+    whose sha the store already recorded has not changed and is copied from
+    the copy in hand rather than fetched again.
+    """
     root = _get_json(f"{API}/git/trees/{sha}", timeout)
     cht = next((e for e in root["tree"] if e["path"] == "cht"), None)
     if cht is None:
@@ -326,20 +347,102 @@ def _tree(sha: str, timeout: int) -> dict[str, str]:
         listing = _get_json(f"{API}/git/trees/{node['sha']}", timeout)
         if listing.get("truncated"):
             raise RuntimeError(f"{d}: listing truncated by the API")
-        out[d] = [e["path"] for e in listing["tree"]
+        out[d] = [(e["path"], e["sha"]) for e in listing["tree"]
                   if e["type"] == "blob" and e["path"].endswith(".cht")]
     return out
 
 
+# One connection per worker thread, reused for every file it fetches.
+#
+# Measured on 40 files from the CDN: 1,071 ms each on a fresh connection,
+# 38 ms each on one kept alive. The cost was never the bytes, it was a TLS
+# handshake per file, three and a half thousand times.
+_local = threading.local()
+
+
+def _conn(timeout: int) -> http.client.HTTPSConnection:
+    c = getattr(_local, "conn", None)
+    if c is None:
+        c = http.client.HTTPSConnection(
+            urllib.parse.urlsplit(RAW).netloc, timeout=timeout,
+            context=ssl_context())
+        _local.conn = c
+    return c
+
+
+def _drop_conn() -> None:
+    c = getattr(_local, "conn", None)
+    if c is not None:
+        try:
+            c.close()
+        except Exception:                                    # noqa: BLE001
+            pass
+        _local.conn = None
+
+
+def _fetch_blob(path: str, timeout: int) -> bytes:
+    """GET one path from the CDN on this thread's connection. Retries once
+    on a dropped connection, which is how a kept-alive socket says the far
+    end timed it out."""
+    for attempt in (1, 2):
+        c = _conn(timeout)
+        try:
+            c.request("GET", path, headers=UA)
+            r = c.getresponse()
+            data = r.read()
+        except (http.client.HTTPException, OSError):
+            _drop_conn()
+            if attempt == 2:
+                raise
+            continue
+        if r.status != 200:
+            _drop_conn()
+            raise urllib.error.HTTPError(RAW + path, r.status, r.reason,
+                                         r.getheaders(), None)
+        return data
+    raise RuntimeError("unreachable")
+
+
 def _download(sha: str, d: str, name: str, dest: str, timeout: int) -> None:
-    url = (f"{RAW}/{sha}/cht/" + urllib.parse.quote(d) + "/"
-           + urllib.parse.quote(name))
-    req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=timeout,
-                                context=ssl_context()) as f:
-        data = f.read()
+    path = (f"/{REPO}/{sha}/cht/" + urllib.parse.quote(d) + "/"
+            + urllib.parse.quote(name))
+    data = _fetch_blob(path, timeout)
     with open(dest, "wb") as f:
         f.write(data)
+
+
+# A fetch that was cancelled removes its own directory. One whose process
+# was killed cannot, and five of them, 22 MB, were found in a store whose
+# fetches had dragged. Anything this old is not a fetch still running.
+STALE_FETCH = 3600
+
+
+def sweep_stale(now: float | None = None) -> list[str]:
+    """Remove fetch-* leftovers older than STALE_FETCH seconds. Returns them.
+
+    Only directories with the fetch prefix, only in the store, only old: a
+    fetch running in another copy of the app is younger than an hour, and
+    the live database is not named like this.
+    """
+    base = store()
+    now = time.time() if now is None else now
+    gone = []
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return gone
+    for n in names:
+        if not n.startswith("fetch-"):
+            continue
+        full = os.path.join(base, n)
+        try:
+            if not os.path.isdir(full) or now - os.path.getmtime(full) < STALE_FETCH:
+                continue
+            shutil.rmtree(full)
+            gone.append(full)
+        except OSError:
+            continue
+    return gone
 
 
 def fetch(progress=None, cancelled=None, timeout: int = TIMEOUT) -> dict:
@@ -359,6 +462,7 @@ def fetch(progress=None, cancelled=None, timeout: int = TIMEOUT) -> dict:
     def stop() -> bool:
         return bool(cancelled and cancelled())
 
+    sweep_stale()
     say(0, 0, "asking upstream what is current")
     remote = remote_state(timeout)
     sha = remote["sha"]
@@ -369,17 +473,37 @@ def fetch(progress=None, cancelled=None, timeout: int = TIMEOUT) -> dict:
     if not total:
         raise RuntimeError("upstream listed no cheat files")
 
+    # What the store already holds, by blob sha. A file whose sha has not
+    # moved is the same bytes upstream has, and is copied from here rather
+    # than fetched: a routine update is a few files, not all of them.
+    have = _manifest()
+    live = store_cht()
+
     # Alongside the live copy so the swap at the end is a rename, not a copy
     # across filesystems.
     tmp = tempfile.mkdtemp(prefix="fetch-", dir=_ensure(store()))
     try:
-        jobs = []
-        for d, names in tree.items():
+        jobs, reuse, manifest = [], [], {}
+        for d, entries in tree.items():
             os.makedirs(os.path.join(tmp, d), exist_ok=True)
-            jobs += [(d, n) for n in names]
+            for n, blob in entries:
+                key = f"{d}/{n}"
+                manifest[key] = blob
+                src = os.path.join(live, d, n)
+                if have.get(key) == blob and os.path.isfile(src):
+                    reuse.append((src, os.path.join(tmp, d, n)))
+                else:
+                    jobs.append((d, n))
 
         done = 0
-        say(done, total, f"fetching {total} cheat files")
+        for src, dest in reuse:
+            shutil.copyfile(src, dest)
+            done += 1
+            if done % 200 == 0:
+                say(done, total, f"keeping {len(reuse)} unchanged files")
+            if stop():
+                raise Cancelled()
+        say(done, total, f"fetching {len(jobs)} changed or new files")
         with ThreadPoolExecutor(max_workers=WORKERS) as ex:
             futures = [ex.submit(_download, sha, d, n,
                                  os.path.join(tmp, d, n), timeout)
@@ -389,7 +513,8 @@ def fetch(progress=None, cancelled=None, timeout: int = TIMEOUT) -> dict:
                     fut.result()          # re-raises whatever the download hit
                     done += 1
                     if done % 25 == 0 or done == total:
-                        say(done, total, f"fetching {total} cheat files")
+                        say(done, total,
+                            f"fetching {len(jobs)} changed or new files")
                     if stop():
                         raise Cancelled()
             except BaseException:
@@ -402,8 +527,12 @@ def fetch(progress=None, cancelled=None, timeout: int = TIMEOUT) -> dict:
             raise RuntimeError(f"fetched {got} files, expected {total}")
 
         say(total, total, "installing")
-        _swap(tmp, store_cht())
+        _swap(tmp, live)
         tmp = None
+        tmpm = manifest_file() + ".tmp"
+        with open(tmpm, "w") as f:
+            json.dump(manifest, f)
+        os.replace(tmpm, manifest_file())
     finally:
         if tmp and os.path.isdir(tmp):
             shutil.rmtree(tmp, ignore_errors=True)

@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -214,6 +215,108 @@ class Swap(Env):
         populate(new, per_dir=2)
         db._swap(new, db.store_cht())
         self.assertEqual(db.count_files(), total(2))
+
+
+class Fetch(unittest.TestCase):
+    """The fetch, offline: the tree and the CDN are both stubbed, and what
+    is counted is which files it asked the CDN for."""
+
+    def setUp(self):
+        import importlib
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        # Restored, not popped: another fixture may have set it for the whole
+        # run, and the module attributes below are patched on the one db
+        # module every other test shares.
+        saved = os.environ.get("XDG_DATA_HOME")
+        os.environ["XDG_DATA_HOME"] = os.path.join(self.tmp.name, "data")
+        self.addCleanup(lambda: (os.environ.__setitem__("XDG_DATA_HOME", saved)
+                                 if saved is not None
+                                 else os.environ.pop("XDG_DATA_HOME", None)))
+        import db
+        self.db = db
+        for name in ("_get_json", "_fetch_blob", "remote_state"):
+            self.addCleanup(setattr, db, name, getattr(db, name))
+        self.blobs = {}          # "dir/name" -> (sha, bytes)
+        self.asked = []
+        for d in db.DIRS:
+            for i in range(3):
+                self.blobs[f"{d}/g{i}.cht"] = (f"sha{i}-{d[:3]}",
+                                               f"cheats={i}".encode())
+        self.sha = "commit1"
+
+        def get_json(url, timeout=0):
+            if url.endswith(f"/git/trees/{self.sha}"):
+                return {"tree": [{"path": "cht", "sha": "T"}]}
+            if url.endswith("/git/trees/T"):
+                return {"tree": [{"path": d, "sha": "D" + d} for d in db.DIRS]}
+            d = url.rsplit("/git/trees/D", 1)[1]
+            return {"tree": [{"path": k.split("/", 1)[1], "type": "blob",
+                              "sha": v[0]}
+                             for k, v in self.blobs.items()
+                             if k.startswith(d + "/")]}
+
+        def fetch_blob(path, timeout=0):
+            import urllib.parse
+            key = urllib.parse.unquote(path.split("/cht/", 1)[1])
+            self.asked.append(key)
+            return self.blobs[key][1]
+
+        db._get_json = get_json
+        db._fetch_blob = fetch_blob
+        db.remote_state = lambda timeout=0: {"sha": self.sha,
+                                             "date": "2026-09-04T00:00:00Z"}
+
+    def test_a_first_fetch_asks_for_every_file(self):
+        st = self.db.fetch()
+        self.assertEqual(st["files"], len(self.blobs))
+        self.assertEqual(sorted(self.asked), sorted(self.blobs))
+        d = self.db.DIRS[0]
+        with open(os.path.join(self.db.store_cht(), d, "g1.cht"), "rb") as f:
+            self.assertEqual(f.read(), b"cheats=1")
+
+    def test_an_update_asks_only_for_what_moved(self):
+        self.db.fetch()
+        self.asked.clear()
+        d = self.db.DIRS[0]
+        self.blobs[f"{d}/g1.cht"] = ("sha1-new", b"cheats=1b")   # changed
+        self.blobs[f"{d}/g9.cht"] = ("sha9", b"cheats=9")        # new
+        self.sha = "commit2"
+        st = self.db.fetch()
+        self.assertEqual(sorted(self.asked), [f"{d}/g1.cht", f"{d}/g9.cht"])
+        self.assertEqual(st["files"], len(self.blobs))
+        with open(os.path.join(self.db.store_cht(), d, "g1.cht"), "rb") as f:
+            self.assertEqual(f.read(), b"cheats=1b")
+        with open(os.path.join(self.db.store_cht(), d, "g0.cht"), "rb") as f:
+            self.assertEqual(f.read(), b"cheats=0")        # kept, not fetched
+
+    def test_a_killed_fetch_is_swept_out_and_a_running_one_is_not(self):
+        db = self.db
+        os.makedirs(db.store(), exist_ok=True)
+        old = os.path.join(db.store(), "fetch-old")
+        young = os.path.join(db.store(), "fetch-young")
+        live = os.path.join(db.store(), "cht")
+        for d in (old, young, live):
+            os.makedirs(d)
+        past = time.time() - db.STALE_FETCH - 60
+        os.utime(old, (past, past))
+        os.utime(live, (past, past))
+        gone = db.sweep_stale()
+        self.assertEqual(gone, [old])
+        self.assertTrue(os.path.isdir(young))
+        self.assertTrue(os.path.isdir(live))     # never the database itself
+        # And the fetch does it on its way in.
+        os.makedirs(old); os.utime(old, (past, past))
+        self.db.fetch()
+        self.assertFalse(os.path.isdir(old))
+
+    def test_a_file_the_manifest_names_but_the_store_lacks_is_fetched(self):
+        self.db.fetch()
+        self.asked.clear()
+        d = self.db.DIRS[0]
+        os.remove(os.path.join(self.db.store_cht(), d, "g2.cht"))
+        self.db.fetch()
+        self.assertEqual(self.asked, [f"{d}/g2.cht"])
 
 
 if __name__ == "__main__":
