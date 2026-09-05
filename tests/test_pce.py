@@ -251,5 +251,70 @@ class ThroughCheatfile(unittest.TestCase):
                          ("poke", 0x1F1548, 0x64))
 
 
+class DiscsOnTheCard(unittest.TestCase):
+    """A disc is a cue in the same Assets/pce folder as a HuCard.
+
+    The Pocket has one platform for both. This app lists them as two systems,
+    because they are two cheat corpora, so a walk of the shared folder has to
+    file each file under its own system and the .bin under neither.
+    """
+
+    def setUp(self):
+        import tempfile
+        import card
+        self.card = card
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, self.root, True)
+        self.pce = os.path.join(self.root, "Assets", "pce", "common")
+        os.makedirs(self.pce)
+        for name in ("Bonk.pce", "Rondo.cue", "Rondo.bin", "Rondo.cue.cht"):
+            with open(os.path.join(self.pce, name), "wb") as f:
+                f.write(b"x")
+
+    def test_both_systems_exist_from_the_one_folder(self):
+        ids = [p.id for p in self.card.Card(self.root).platforms()]
+        self.assertIn("pce", ids)
+        self.assertIn("pcecd", ids)
+
+    def test_each_system_lists_only_its_own_files(self):
+        c = self.card.Card(self.root)
+        hucard = [g.name for g in c.games("pce")]
+        disc = [g.name for g in c.games("pcecd")]
+        self.assertEqual(hucard, ["Bonk"])
+        self.assertEqual(disc, ["Rondo"])
+
+    def test_the_bin_is_not_a_game(self):
+        c = self.card.Card(self.root)
+        names = [os.path.basename(g.path)
+                 for pid in ("pce", "pcecd") for g in c.games(pid)]
+        self.assertNotIn("Rondo.bin", names)
+
+    def test_a_disc_cheat_file_follows_the_one_rule(self):
+        c = self.card.Card(self.root)
+        disc = c.games("pcecd")[0]
+        self.assertEqual(disc.platform, "pcecd")
+        self.assertEqual(os.path.basename(disc.cht_path), "Rondo.cue.cht")
+        games, chts = c.scan("pcecd")
+        self.assertIn(disc.cht_path, chts)
+
+    def test_a_disc_reads_cheats_the_hucard_way(self):
+        groups = cheatfile.parse(cht(
+            'cheats = 1\ncheat0_desc = "Lives"\ncheat0_code = "1f008d:09"\n'),
+            "pcecd")
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(cheatfile.applied_by(groups[0].codes[0], "pcecd"),
+                         "poke")
+        self.assertTrue(cheatfile.decoded("pcecd"))
+
+    def test_the_disc_has_no_platform_file_to_read(self):
+        # /Platforms/pce.json is the HuCard's name; a disc keeps its own.
+        os.makedirs(os.path.join(self.root, "Platforms"))
+        with open(os.path.join(self.root, "Platforms", "pce.json"), "w") as f:
+            f.write('{"platform": {"name": "TurboGrafx-16"}}')
+        c = self.card.Card(self.root)
+        self.assertEqual(c.platform_name("pce"), "TurboGrafx-16")
+        self.assertEqual(c.platform_name("pcecd"), "PC Engine CD")
+
+
 if __name__ == "__main__":
     unittest.main()

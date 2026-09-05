@@ -44,7 +44,7 @@ import pce as pce_mod
 # through gba.py, which adapts `gbacht` - the same relationship chtparse has to
 # the Game Boy core, except that on this system the decoder is what produces
 # the file the hardware reads rather than a model of a parser inside it.
-DECODED = ("gb", "gbc", "gba", "pce")
+DECODED = ("gb", "gbc", "gba", "pce", "pcecd")
 
 # How many ways a system's core can make a code take effect.
 #
@@ -59,6 +59,7 @@ MECHANISMS = {
     "gbc": ("poke", "patch"),
     "gba": ("poke",),
     "pce": ("poke",),
+    "pcecd": ("poke",),     # a disc's cheats are the same RAM pokes
 }
 
 # What the core can hold. No limit is claimed for a system whose core has not
@@ -166,7 +167,7 @@ def parse(data: bytes, platform: str, max_groups: int = NO_LIMIT) -> list:
     """Cheat groups from a file, read the way this system's codes work."""
     if platform == "gba":
         return gba_mod.parse(data, max_groups=max_groups)
-    if platform == "pce":
+    if platform in ("pce", "pcecd"):
         return pce_mod.parse(data, max_groups=max_groups)
     if decoded(platform):
         return chtparse.parse(data, max_codes=NO_LIMIT, max_groups=max_groups)
@@ -177,7 +178,7 @@ def applied_by(code, platform: str) -> str:
     """How the core makes one code take effect, or "" when that is not known."""
     if platform == "gba":
         return gba_mod.applied_by(code)
-    if platform == "pce":
+    if platform in ("pce", "pcecd"):
         return pce_mod.applied_by(code)
     if not decoded(platform):
         return ""

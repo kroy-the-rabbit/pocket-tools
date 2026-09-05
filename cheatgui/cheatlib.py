@@ -40,19 +40,18 @@ def is_local(path: str) -> bool:
 # Its codes are a different language, so a Game Boy file matched to a GBA ROM
 # would not be a near miss, it would be nonsense. See cheatfile.py.
 #
-# PC Engine shares with nothing, and it has two neighbours it might look like
-# it should. libretro ships a SuperGrafx directory, which this core will never
-# run because it drops SuperGrafx for ALM room. It also ships a PC Engine CD
-# directory, and that one is a matter of timing rather than of never: the core
-# reads discs on `cd-streaming` but ships no release that does. When it does,
-# CD gets its own id here rather than joining this tuple, because a HuCard
-# cheat and a CD cheat are written against different games and a near miss
-# across them would be a wrong match, not a helpful one.
+# PC Engine and PC Engine CD each search only their own directory. libretro
+# ships a SuperGrafx directory too, which this core will never run because it
+# drops SuperGrafx for ALM room. The CD directory has its own id rather than
+# joining the HuCard tuple, because a HuCard cheat and a CD cheat are written
+# against different games and a near miss across them would be a wrong match,
+# not a helpful one.
 SEARCH = {
     "gbc": ("gbc", "gb"),
     "gb":  ("gb", "gbc"),
     "gba": ("gba",),
     "pce": ("pce",),
+    "pcecd": ("pcecd",),
 }
 # A system switched off in card.ENABLED disables itself here: _files_for drops
 # any id that is not in card.SUPPORTED, so an entry above for a system that is

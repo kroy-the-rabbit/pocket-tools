@@ -73,6 +73,11 @@ class Rom:
     filename: str
     size: int
     what: str
+    # Other names the core accepts in the same slot, from the manifest's
+    # `alternate_filenames`. Any one of them satisfies the slot; `filename` is
+    # the one to recommend when none is there. The PC Engine core's System
+    # Card is the case: it asks for bios_3_0_usa.pce and takes four others.
+    alternates: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -108,7 +113,9 @@ CARTTOOLS_REPO = "kroy-the-rabbit/openfpga-carttools"
 # unioned with what its own data.json declares, so a core that starts wanting a
 # different file says so itself and a core that mismarks one we already know
 # about cannot drop it. See wanted(). An empty tuple is a real answer, not a
-# missing one: the PC Engine has no boot ROM.
+# missing one: a PC Engine HuCard needs no boot ROM. A PC Engine CD needs a
+# System Card, and the core says so itself, in slot 0's `filename` and
+# `alternate_filenames`, so it is not written here.
 CORES = (
     Core("kroy.GBC", "gbc", "Game Boy Color", "kroy.GBC_", GBC_REPO,
          (Rom("gbc_bios.bin", 2304, "GBC BIOS"),)),
@@ -263,7 +270,9 @@ def wanted(root: str, core: Core) -> tuple[Rom, ...]:
         size = int(s.get("size_exact") or 0)
         if not size and name in table:
             size = table[name].size
-        found.append(Rom(name, size, s.get("name") or name))
+        alts = tuple(a for a in (s.get("alternate_filenames") or [])
+                     if isinstance(a, str) and a and a != name)
+        found.append(Rom(name, size, s.get("name") or name, alts))
     named = {r.filename for r in found}
     found.extend(r for r in core.bios if r.filename not in named)
     return tuple(found)
@@ -318,14 +327,20 @@ def boot_roms(root: str) -> list[RomState]:
         dirs = rom_dirs(root, c)
         for rom in wanted(root, c):
             state = RomState(c, rom, None, 0)
-            for d in dirs:
-                p = os.path.join(d, rom.filename)
-                try:
-                    state.size = os.path.getsize(p)
-                    state.path = p
+            # The named file first, in every directory, then each alternate:
+            # any of them fills the slot, and the recommended one wins when
+            # more than one is present.
+            for name in (rom.filename, *rom.alternates):
+                for d in dirs:
+                    p = os.path.join(d, name)
+                    try:
+                        state.size = os.path.getsize(p)
+                        state.path = p
+                        break
+                    except OSError:
+                        continue
+                if state.path:
                     break
-                except OSError:
-                    continue
             out.append(state)
     return out
 

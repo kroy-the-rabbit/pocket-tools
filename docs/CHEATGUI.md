@@ -164,9 +164,11 @@ Three panes: the systems on the card, the games in the selected system, and the
 cheats for the selected game. Tick the ones you want and press **Send to
 Pocket**.
 
-**Game Boy**, **Game Boy Color** and **PC Engine** are listed. An NES or SNES
-core on the same card ignores cheat files entirely, so offering checkboxes
-there would be a lie.
+**Game Boy**, **Game Boy Color**, **Game Boy Advance**, **PC Engine** and
+**PC Engine CD** are listed. An NES or SNES core on the same card ignores cheat
+files entirely, so offering checkboxes there would be a lie. A disc and a
+HuCard sit in the same folder on the card and appear as two systems here,
+because they are two cheat corpora.
 
 Which systems are offered is one tuple, `card.ENABLED`. Everything else follows
 from it: the database directories fetched, the ROM extensions recognised, the
@@ -308,10 +310,10 @@ database had. What you do not get is anything this app would have to invent:
 the **Applied** column, and a code store meter. Matching is also restricted to
 that system's own directory: Game Boy and Game Boy Color share a search,
 because a GBC release filed under Game Boy is a near miss worth catching, and
-so is `pce` restricted to its own. libretro also ships SuperGrafx and PC
-Engine CD directories: the core will never run SuperGrafx, and it does read
-discs on the `cd-streaming` branch but ships no release that does, so CD is
-unmapped for now and will get its own id rather than being folded in here.
+so is `pce` restricted to its own, and so is `pcecd`, the PC Engine CD, which
+is its own system here with its own directory: a disc and a HuCard share a
+folder on the card and share nothing in the cheat database. libretro also
+ships a SuperGrafx directory, which the core will never run.
 
 The **Applied** column says how the core makes each cheat take effect, because
 the two ways do not behave the same:

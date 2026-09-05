@@ -209,6 +209,26 @@ class Wanted(Env):
         self.assertEqual([(r.filename, r.size) for r in got],
                          [("gba_bios.bin", 16384)])
 
+    def test_an_alternate_filename_fills_the_slot(self) -> None:
+        # The PC Engine CD manifest: slot 0 asks for bios_3_0_usa.pce and
+        # accepts four others. A card carrying only an alternate is not
+        # missing its System Card, and the recommendation stays the first.
+        install_core(self.root, PCE, "1.0", {
+            "name": "Cartridge", "id": 0, "required": True,
+            "filename": "bios_3_0_usa.pce",
+            "alternate_filenames": ["bios_3_0_jap.pce", "bios_2_0_usa.pce"]})
+        rom = core.wanted(self.root, PCE)[0]
+        self.assertEqual(rom.alternates,
+                         ("bios_3_0_jap.pce", "bios_2_0_usa.pce"))
+        write(os.path.join(self.root, "Assets", "pce", "common",
+                           "bios_2_0_usa.pce"), "x" * 262144)
+        state = [r for r in core.boot_roms(self.root)
+                 if r.rom.filename == "bios_3_0_usa.pce"][0]
+        self.assertTrue(state.ok)
+        self.assertTrue(state.path.endswith("bios_2_0_usa.pce"))
+        self.assertEqual(state.where, os.path.join(
+            "Assets", "pce", "common", "bios_3_0_usa.pce"))
+
     def test_browsable_slots_are_not_files_you_supply(self) -> None:
         # Cartridge and Save are required and have no fixed filename. Reporting
         # either as missing would tell every user their card is broken.

@@ -42,7 +42,7 @@ runs on a computer; the other four are cores that run on the handheld.
 | **pocket-tools** | this app | reads the card, picks cheats, installs cores, files dumps |
 | [openfpga-GBC-cheats](https://github.com/kroy-the-rabbit/openfpga-GBC-cheats) | Game Boy, Game Boy Color | cheats on a ROM or on a real cartridge |
 | [openfpga-GBA-cheats](https://github.com/kroy-the-rabbit/openfpga-GBA-cheats) | Game Boy Advance | cheats on a ROM, SD card only |
-| [openfpga-pcengine-cheats](https://github.com/kroy-the-rabbit/openfpga-pcengine-cheats) | PC Engine, TurboGrafx-16 | cheats on a ROM, SD card only |
+| [openfpga-pcengine-cheats](https://github.com/kroy-the-rabbit/openfpga-pcengine-cheats) | PC Engine, TurboGrafx-16, PC Engine CD | cheats on a ROM or a disc, SD card only |
 | [openfpga-carttools](https://github.com/kroy-the-rabbit/openfpga-carttools) | GB, GBC, GBA | dumps cartridges, does not play them. Optional: install it and the dump features appear |
 
 The three cheat cores are forks that add a cheat engine to somebody else's core,
@@ -59,7 +59,7 @@ here, so a newly tagged core appears without this list having to be edited.
 
 | | |
 |---|---|
-| Picking cheats for Game Boy, Game Boy Color, Game Boy Advance, PC Engine | **works** |
+| Picking cheats for Game Boy, Game Boy Color, Game Boy Advance, PC Engine, PC Engine CD | **works** |
 | Reading your ticks back off the card next time | **works** |
 | Installing and updating the cores | **works** |
 | Reporting which boot ROMs the card is missing | **works** |
@@ -75,11 +75,16 @@ here, so a newly tagged core appears without this list having to be edited.
 
 ## Versions
 
-The five projects in this set share one version number, and this app takes its
-from the cores. The set is at **0.9999**. The next release is 0.99991, then
-0.99992, and so on: each one adds to the tail rather than climbing toward a
-round number. Nothing here reaches 1.0, because 1.0 is a claim to be finished
-and none of this is.
+Every project in this set sits at **0.9999**, and none of them moves off it.
+That is the whole point of the number: 1.0 is a claim to be finished, none of
+this is finished, and a version that never climbs cannot drift into making
+that claim by accident.
+
+**They are not kept in step with each other.** A shared prefix is not a shared
+version. Each project releases when it has something to release, and a tag
+adds the short SHA of the commit it was cut from, so this app's
+`v0.9999.f50b44b` and the dumper's `v0.9999.52305c7` are unrelated releases
+that happen to share a prefix. Read the tail, not the number.
 
 ## Get the app
 
@@ -160,9 +165,11 @@ ROMs...** for the whole list and where each one goes:
 | `sgb_boot.bin` | `Assets/gb/common/` | 256 bytes |
 | `gba_bios.bin` | `Assets/gba/common/` | 16384 bytes |
 
-The PC Engine core is not in that table because it needs no boot ROM at all, and
-neither does CartTools. That is an answer rather than an oversight: there is
-nothing for you to find, and the app never reports anything missing for them.
+The PC Engine core is not in that table because a HuCard needs no boot ROM,
+and neither does CartTools. A PC Engine CD needs a System Card, and the core
+declares that itself: `bios_3_0_usa.pce` in `Assets/pce/common/`, or any of the
+four others it names, and the app reports it missing only once the core is
+installed and none of the five is there.
 
 Dump them from your own hardware, or supply your own copies. A file of the wrong
 size is reported separately from a missing one, because that is the failure that

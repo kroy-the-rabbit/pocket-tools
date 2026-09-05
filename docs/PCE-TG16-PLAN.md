@@ -69,54 +69,31 @@ the convention the Game Boy cores use.
   ALM headroom the cheat engine needs. A `.sgx` file on the card will not run
   correctly, so offering to write cheats for one would be a lie.
 * **`NEC - PC Engine SuperGrafx`** is a real libretro directory. Do not map it.
-* **`NEC - PC Engine CD - TurboGrafx-CD`** is also real, and this line used to
-  say CD was neither supported nor planned. Both halves are now wrong. The
-  core reads discs on `cd-streaming`: a `Disc (cue)` slot at id 100, `Disc
-  data` at 101, and Rondo booting from cue plus bin on hardware.
+* **`NEC - PC Engine CD - TurboGrafx-CD`** is mapped, as the system `pcecd`.
+  The PCE core's `v0.9999.d5d93c8` reads discs from cue plus bin, slot 100
+  `Disc (cue)` and 101 `Disc data`, and cheats were verified on a disc on
+  hardware. One disc has been tested, Rondo; the core's release notes say so.
 
-  It stays unmapped for now, on readiness rather than on capability. No PCE
-  release carries CD, only Rondo has been tested, and another build comes
-  before that branch can be released.
+## PC Engine CD, how it is wired
 
-  **The database side needs no work when it is turned on.** All 136 files in
-  the directory parse with `pce.py` as it stands, 667 codes, and every one
-  lands in the 8KB work RAM `in_work_ram()` already checks: the CD corpus is
-  the same `addr:val` poke form as the HuCard one, including the Rondo file
-  itself. What is left is the card side, and it is listed below.
+A disc and a HuCard share the Pocket's `pce` platform and its `Assets/pce`
+folder. They are two systems here because they are two cheat corpora, and a
+HuCard cheat matched to a disc would be a wrong match, not a near miss.
 
-## PC Engine CD, what to settle before mapping it
+| | |
+|---|---|
+| system id | `pcecd`, this app's, not the Pocket's. `card.FOLDER` maps it to `Assets/pce` |
+| the game | the `.cue`. `card.SYSTEM_OF_EXT` files `.cue` under `pcecd` and `.pce` under `pce` from the one walk; the `.bin` is disc data and is listed under neither |
+| cheat file | `<name>.cue.cht`, the one rule every system here follows. The core's cheat slot is picked by hand, so the name is a convention, and one convention is kept rather than a second invented |
+| parser | `pce.py`, unchanged. All 136 files in the directory parse, 667 codes, every one inside the 8KB work RAM `in_work_ram()` checks |
+| search | its own directory only, `cheatlib.SEARCH["pcecd"]` |
+| display name | `card.DISPLAY`, not `/Platforms/pce.json`, which names the HuCard |
+| save | the core writes `Saves/pce/common/<cue name>.sav`; `card.save_path` derives the same from the cue path |
+| System Card | slot 0 carries `bios_3_0_usa.pce` with four `alternate_filenames`. `core.wanted()` reads both, and `boot_roms()` accepts any of them |
 
-Not a plan, a list of the questions the switch depends on. Nothing here is
-started.
-
-1. **A disc is a `.cue` plus one or more `.bin`,** so the ROM identity is the
-   cue. `card.ROM_EXT` is a flat set of extensions and `KNOWN` maps one
-   directory to one extension, so CD needs its own entry rather than a second
-   extension on `pce`: the two directories are different corpora and a HuCard
-   cheat matched to a disc would be a wrong match.
-2. **Cheat filename.** The HuCard convention is `<rom>.pce.cht` beside the
-   ROM, cloned from slot 0. Slot 100's filename would make it `<name>.cue.cht`.
-   Confirm against the core rather than assuming the same rule.
-3. **Saves are bound to the cue path** on `cd-streaming`, and a cue-named
-   Rondo save reloads. `card.save_path` already derives `<stem>.sav` from the
-   ROM path, so a cue would fall out correctly, but it has never been run.
-4. **The `.bin` must not be listed as a game.** It is disc data, not a title.
-5. **`(SCD)` and `(ACD)` files in the directory** name Super CD and Arcade CD
-   titles, which need more RAM than a base CD unit. Whether the core runs them
-   is a core question and decides whether those files should be offered.
-6. **A System Card becomes a boot ROM, and `wanted()` cannot express it.**
-   This one bites the day the branch releases, whether or not CD is mapped
-   here. On `cd-streaming` slot 0 gains `"filename": "bios_3_0_usa.pce"` with
-   four `alternate_filenames`; the released manifest has neither. `wanted()`
-   takes any `required` slot that names a filename, so the System Card would
-   start being reported correctly on its own. But nothing in this app reads
-   `alternate_filenames` at all, so a card carrying `bios_2_0_usa.pce`, which
-   the core accepts, would be reported as missing its boot ROM.
-
-   `core.CORES` also still says of PC Engine that "the PC Engine has no boot
-   ROM", and that stops being true at the same moment. Left as it is
-   deliberately: it is correct for every released PCE core, and the fix is a
-   change to how a required file is matched rather than a table edit.
+**Not settled, and not claimed:** whether `(SCD)` and `(ACD)` titles in the
+directory run on the core is a core question. The files are offered because
+the directory is; the core's own notes say what it plays.
 
 ## 2. Database contract (`db.py`)
 

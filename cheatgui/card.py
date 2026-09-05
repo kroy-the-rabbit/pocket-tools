@@ -87,6 +87,12 @@ KNOWN = {
     "gbc": ("Nintendo - Game Boy Color", ".gbc"),
     "gba": ("Nintendo - Game Boy Advance", ".gba"),
     "pce": ("NEC - PC Engine - TurboGrafx 16", ".pce"),
+    # A disc is the cue. Its .bin is disc data, not a title, and is not listed.
+    # The id is this app's, not the Pocket's: on the card a disc sits in the
+    # same Assets/pce folder as a HuCard (FOLDER, below), and the PCE core
+    # loads both. It is a separate system here because it is a separate cheat
+    # corpus, and a HuCard cheat matched to a disc would be a wrong match.
+    "pcecd": ("NEC - PC Engine CD - TurboGrafx-CD", ".cue"),
     # The dumper. Both fields are empty because neither exists for it: it is
     # not a system you play, so libretro has no cheat directory for it, and its
     # output carries .gb, .gbc or .gba rather than an extension of its own. The
@@ -116,26 +122,17 @@ KNOWN = {
 # libretro `NEC - PC Engine SuperGrafx` directory is not mapped for the same
 # reason.
 #
-# **PC Engine CD is a different case now, and this used to say otherwise.**
-# The core does run discs: `cd-streaming` carries a `Disc (cue)` slot at id
-# 100 and `Disc data` at 101, and Rondo boots from cue plus bin on hardware.
-# It is still off here, and that is a readiness call rather than a capability
-# one:
-#
-#   * no release carries it. The newest PCE tag is v0.9999 and it is HuCard
-#     only, so a .cue on a card today reaches a core that cannot open it.
-#   * only Rondo has been tested. One disc, one game.
-#   * another build comes before that branch can be released at all.
-#
-# Turning it on early would repeat exactly the mistake the Game Boy Advance
-# paragraph above records: a system, a game list and a set of checkboxes that
-# do nothing.
-#
-# **Nothing else has to be built for it.** All 136 files in
+# **PC Engine CD is on**, as of the PCE core's v0.9999.d5d93c8: a `Disc (cue)`
+# slot at id 100, `Disc data` at 101, and cheats verified on a disc on
+# hardware. One disc has been tested, Rondo, and the core's own release notes
+# say so. The database side needed nothing: all 136 files in
 # `NEC - PC Engine CD - TurboGrafx-CD` parse with pce.py unchanged, 667 codes,
-# and every one lands in the 8KB work RAM in_work_ram() already checks. The
-# switch is this entry plus ".cue" in the extension set; see
-# docs/PCE-TG16-PLAN.md for what to confirm on hardware first.
+# every one inside the 8KB work RAM in_work_ram() checks.
+#
+# A disc's cheat file is `<name>.cue.cht`, by the same rule as every other
+# system here: the cheat slot is picked by hand in the core menu, so the name
+# is a convention rather than something APF derives, and the convention is
+# kept rather than a second one invented for discs.
 #
 # **The dumper is not in ENABLED**, and that is not about whether it is
 # released. `carttools` is in KNOWN because the app knows the id and reads the
@@ -143,7 +140,16 @@ KNOWN = {
 # for, and the dumper reads none and writes none: it produces ROM images. Its
 # dumps reach the app through dumps.py and the Cartridge dumps category, not
 # through this list. See core.CORES, where it is a core like any other.
-ENABLED = ("gb", "gbc", "gba", "pce")
+ENABLED = ("gb", "gbc", "gba", "pce", "pcecd")
+
+# Which Assets folder a system's files live in, where it is not the id. A
+# disc and a HuCard share the Pocket's `pce` platform and its folder; the
+# split into two systems is this app's, made for the cheat corpus.
+FOLDER = {"pcecd": "pce"}
+
+
+def folder_of(pid: str) -> str:
+    return FOLDER.get(pid, pid)
 
 # An entry with nothing in the field a set needs is dropped rather than carried
 # as an empty string. An empty extension would match every file on the card
@@ -151,6 +157,9 @@ ENABLED = ("gb", "gbc", "gba", "pce")
 # systems to browse for games.
 SUPPORTED = {p: KNOWN[p][0] for p in ENABLED if KNOWN[p][0]}
 ROM_EXT = {KNOWN[p][1] for p in ENABLED if KNOWN[p][1]}
+# Extension -> system, for the systems that share a folder: a walk of
+# Assets/pce meets both .pce and .cue and has to file each under its own id.
+SYSTEM_OF_EXT = {KNOWN[p][1]: p for p in ENABLED if KNOWN[p][1]}
 
 # What to call each system before the card has been asked. The card carries
 # its own names in /Platforms/<id>.json, and reading those three small files
@@ -162,6 +171,7 @@ DISPLAY = {
     "gbc": "Game Boy Color",
     "gba": "Game Boy Advance",
     "pce": "PC Engine",
+    "pcecd": "PC Engine CD",
 }
 
 # Folders skipped when listing games. Romhacks are usually pre-patched variants
@@ -240,7 +250,7 @@ class Card:
         """
         out = []
         for pid in sorted(SUPPORTED):
-            adir = os.path.join(self.root, "Assets", pid)
+            adir = os.path.join(self.root, "Assets", folder_of(pid))
             if not os.path.isdir(adir):
                 continue
             out.append(Platform(pid, DISPLAY.get(pid, pid.upper())))
@@ -262,6 +272,11 @@ class Card:
 
     def platform_name(self, pid: str) -> str:
         """What this card calls a system. Reads a file, so not on first paint."""
+        # A system of this app's own, sharing a Pocket platform, has no file
+        # of its own to read and keeps its name here; asking the card would
+        # answer with the HuCard's name for a disc.
+        if pid in FOLDER:
+            return DISPLAY.get(pid, pid.upper())
         path = os.path.join(self.root, "Platforms", f"{pid}.json")
         try:
             with open(path) as f:
@@ -278,14 +293,16 @@ class Card:
         card read over USB with a cold cache that is hundreds of blocking calls
         on the UI thread, which is exactly what it looks like: a dead window.
         """
-        adir = os.path.join(self.root, "Assets", pid)
+        adir = os.path.join(self.root, "Assets", folder_of(pid))
         found: list[Game] = []
         chts: set[str] = set()
         for dirpath, dirs, files in os.walk(adir):
             dirs[:] = [d for d in dirs if d.lower() not in SKIP_DIRS]
             for f in files:
                 ext = os.path.splitext(f)[1].lower()
-                if ext in ROM_EXT:
+                # Only this system's own files: the walk of a shared folder
+                # meets the other system's too, and they are its to list.
+                if ext in ROM_EXT and SYSTEM_OF_EXT.get(ext) == pid:
                     found.append(Game(os.path.join(dirpath, f), pid))
                 elif ext == ".cht":
                     chts.add(os.path.join(dirpath, f))
