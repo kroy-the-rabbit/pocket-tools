@@ -240,13 +240,13 @@ is worse than none.
 ## Game Boy Advance writes a compiled file too
 
 - The older `v0.9999` core reads only `.chtbin`, packed 128-bit entries.
-  `v0.9999.f2a86db` also reads `.cht` and draws the cheat names.
+  Release `v0.9999.20260913` also reads `.cht` and draws the cheat names.
 - For the older binary-only core `gbacht.py` is the parser, not a model of
   it: drift breaks the cheat.
 - `writer.py` writes `Game.gba.cht` (the state file) and `Game.gba.chtbin`.
   The `.chtbin` is written last and removed first.
 - A CodeBreaker write into ROM is a `patch`, applied on the read side by the
-  `v0.9999.f2a86db` release (`rom_patch.sv`, sixteen ROM-patch slots).
+  `v0.9999.20260913` release (`rom_patch.sv`, sixteen ROM-patch slots).
   8+8 code forms stay RAM only.
 
 One more thing differs. A cheat's cost is not its code count. One code becomes

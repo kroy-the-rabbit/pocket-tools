@@ -4,9 +4,14 @@ Tag it and the workflow does the rest: it builds the picker for Linux, macOS
 and Windows, signs the result, and attaches everything to the GitHub release.
 
 ```sh
-git tag -s v0.9999.BUILT_SHA -m "v0.9999.BUILT_SHA"
-git push origin v0.9999.BUILT_SHA
+release_tag="v0.9999.$(date -u +%Y%m%d)"
+git tag -s "$release_tag" -m "$release_tag"
+git push origin "$release_tag"
 ```
+
+Use the UTC calendar date, once per published build. A date tag must not be
+reused for different binaries. The commit remains available from the signed
+tag and build provenance.
 
 The tag drives the version. `.github/workflows/release.yml` strips the leading
 `v` and rewrites `VERSION` in `cheatgui/version.py` before building, so a

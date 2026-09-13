@@ -76,16 +76,10 @@ here, so a newly tagged core appears without this list having to be edited.
 
 ## Versions
 
-Every project in this set sits at **0.9999**, and none of them moves off it.
-That is the whole point of the number: 1.0 is a claim to be finished, none of
-this is finished, and a version that never climbs cannot drift into making
-that claim by accident.
-
-**They are not kept in step with each other.** A shared prefix is not a shared
-version. Each project releases when it has something to release, and a tag
-adds the short SHA of the commit it was cut from, so this app's
-`v0.9999.f50b44b` and the dumper's `v0.9999.52305c7` are unrelated releases
-that happen to share a prefix. Read the tail, not the number.
+Versions use `0.9999.YYYYMMDD`, where the date is UTC. Release tags add `v`,
+for example `v0.9999.20260913`. Each project releases independently.
+The source commit and bitstream checksums are recorded in build provenance.
+A published date is not reused for a different build.
 
 ## Get the app
 
@@ -512,13 +506,13 @@ cartridge path, so cheats here are for ROMs on the card.
 SD card only.
 
 - **Two files per game:** `Game.gba.cht`, the cheats and their names, and
-  `Game.gba.chtbin`, the same cheats packed. GBA `v0.9999.f2a86db` reads
+  `Game.gba.chtbin`, the same cheats packed. GBA release `v0.9999.20260913` reads
   either; only `.cht` gives the overlay names. The older `v0.9999` reads only
   `.chtbin`. Remove cheats with the app, or delete both files.
 - **Decoded:** CodeBreaker and GameShark v1/v2. Undecodable codes are dropped;
   the row stays, greyed.
 - **ROM codes:** a CodeBreaker write into ROM shows as `patched`. Works on the
-  `v0.9999.f2a86db` core. Its ROM-patch table holds sixteen entries.
+  `v0.9999.20260913` release. Its ROM-patch table holds sixteen entries.
 - **Encrypted codes do not work:** GameShark v3, Action Replay v3, CodeBreaker
   after a `9` line. They are rejected by address plausibility.
 - **Store:** 32 entries. A conditional code spends two.
@@ -527,7 +521,8 @@ SD card only.
 
 # Game Gear
 
-The core is available through **Cores...** from `openfpga-GG-cheats`.
+The source is at `openfpga-GG-cheats`. No core release is currently available
+through **Cores...**.
 
 - **One file:** the `.cht`. The core reads text and draws the names.
 - **Game Genie** `XXX-XXX-XXX`: ROM read override, `patched`.
@@ -642,3 +637,5 @@ The Pocket cores are separate works under their own terms: per-file notices for
 the Game Boy one, GPL-2.0 for the PC Engine, Game Boy Advance and CartTools
 ones, over an original that its author put in the public domain. Nothing from
 any of them is included here.
+
+[Engineering history](https://github.com/kroy-the-rabbit/pocket-engineering/blob/main/pocket-tools/README.md) (private).
