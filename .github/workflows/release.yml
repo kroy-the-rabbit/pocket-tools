@@ -334,9 +334,7 @@ jobs:
             echo "**Use at your own risk: cheats can corrupt save files.**"
             echo "Back up saves you care about."
             echo
-            echo "All three builds have now been run on the platform they are"
-            echo "for. Linux and Windows have been used against a real card"
-            echo "end to end; the macOS build has been run and works."
+            echo "Builds are provided for Linux x86_64, Windows x64, and macOS arm64."
             echo
             echo "The macOS build is also **not notarized**. Gatekeeper will"
             echo "refuse it on first launch; see docs/INSTALL.md."

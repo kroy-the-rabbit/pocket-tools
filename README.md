@@ -34,8 +34,7 @@ which, and [Cartridges](#cartridges-read-this-part) explains why it matters.
 
 ## The set
 
-This app is one of five projects that work together. It is the only one that
-runs on a computer; the other four are cores that run on the handheld.
+This app runs on a computer; the cores below run on the handheld.
 
 | | | |
 |---|---|---|
@@ -43,9 +42,11 @@ runs on a computer; the other four are cores that run on the handheld.
 | [openfpga-GBC-cheats](https://github.com/kroy-the-rabbit/openfpga-GBC-cheats) | Game Boy, Game Boy Color | cheats on a ROM or on a real cartridge |
 | [openfpga-GBA-cheats](https://github.com/kroy-the-rabbit/openfpga-GBA-cheats) | Game Boy Advance | cheats on a ROM, SD card only |
 | [openfpga-pcengine-cheats](https://github.com/kroy-the-rabbit/openfpga-pcengine-cheats) | PC Engine, TurboGrafx-16, PC Engine CD | cheats on a ROM or a disc, SD card only |
+| [Game Gear core](https://github.com/kroy-the-rabbit/openfpga-GG-cheats) | Game Gear | cheats on a ROM, SD card only |
+| [openfpga-GameCom](https://github.com/kroy-the-rabbit/openfpga-GameCom) | Game.com | plays SD card ROMs, no cheats. Optional |
 | [openfpga-carttools](https://github.com/kroy-the-rabbit/openfpga-carttools) | GB, GBC, GBA | dumps cartridges, does not play them. Optional: install it and the dump features appear |
 
-The three cheat cores are forks that add a cheat engine to somebody else's core,
+The cheat cores add a cheat engine to somebody else's core,
 and each keeps its own install notes and its own credits. CartTools is a
 subtraction from one. None of them is stock, and stock Pocket cores cannot read
 a cheat file, so the card needs one of these installed or nothing this app
@@ -59,7 +60,7 @@ here, so a newly tagged core appears without this list having to be edited.
 
 | | |
 |---|---|
-| Picking cheats for Game Boy, Game Boy Color, Game Boy Advance, PC Engine, PC Engine CD | **works** |
+| Picking cheats for Game Boy, Game Boy Color, Game Boy Advance, PC Engine, PC Engine CD, Game Gear | **works** |
 | Reading your ticks back off the card next time | **works** |
 | Installing and updating the cores | **works** |
 | Reporting which boot ROMs the card is missing | **works** |
@@ -164,9 +165,10 @@ ROMs...** for the whole list and where each one goes:
 | `gb_bios.bin` | `Assets/gb/common/` | 256 bytes |
 | `sgb_boot.bin` | `Assets/gb/common/` | 256 bytes |
 | `gba_bios.bin` | `Assets/gba/common/` | 16384 bytes |
+| `gamecom_bios.bin` | `Assets/gamecom/common/` | 262144 bytes, asked for only once Game.com is installed |
 
-The PC Engine core is not in that table because a HuCard needs no boot ROM,
-and neither does CartTools. A PC Engine CD needs a System Card, and the core
+The PC Engine and Game Gear cores are not in that table because they need no
+boot ROM, and neither does CartTools. A PC Engine CD needs a System Card, and the core
 declares that itself: `bios_3_0_usa.pce` in `Assets/pce/common/`, or any of the
 four others it names, and the app reports it missing only once the core is
 installed and none of the five is there.
@@ -184,8 +186,8 @@ drop it from the list this way.
 
 ## The cheat database
 
-The app needs the libretro cheat database: the four directories for the systems
-it writes for, about 3400 files. It has none on first run: press **Update** in
+The app needs the libretro cheat database: the directories for the systems it
+writes for, about 4200 files. It has none on first run: press **Update** in
 the bar along the bottom and it fetches one, roughly 16 MB and a minute. It
 comes from
 [libretro/libretro-database](https://github.com/libretro/libretro-database) and
@@ -201,7 +203,7 @@ cheat database: 2456 files, 2026-03-14  update available: 2026-08-01
 cheat database: not fetched yet, press Update
 ```
 
-The comparison is against the newest upstream commit that touched those four
+The comparison is against the newest upstream commit that touched those
 directories, not the repository head, which moves several times a week for
 systems these cores cannot run. **Update** checks first and only downloads if
 there is something to download. An update that fails or is stopped leaves the
@@ -492,26 +494,11 @@ Nothing is lost by keeping both. agg23's core installs beside this one and
 plays SuperGrafx; this one plays everything else and applies cheats. The same is
 true of the libretro SuperGrafx directory, which is deliberately not mapped.
 
-## PC Engine CD is being researched, not dismissed
+## PC Engine CD
 
-The CD RTL is inherited and compiles in every build, `cd.vhd`, `SCSI.vhd`,
-`SCSI_FIFO.vhd`, `CDDA_FIFO.vhd` and `MSM5205.vhd`, and it costs zero logic
-because it is held disabled in three places rather than deleted.
-
-What makes it a project rather than a switch is where MiSTer expects the work to
-happen. Its CD block assumes a host processor running Linux to parse the cue
-sheet, seek the image and feed it sectors. The Pocket has no such processor.
-One core has closed that gap, [Mazamars312's PC Engine
-CD](https://github.com/Mazamars312/openfpga-pcengine-cd), and its manifest shows
-the price: deferred cue and bin slots, a newer APF framework than this core
-targets, a System Card BIOS you supply, and a 64 KB soft MPU standing in for the
-host.
-
-So the open question is not whether CD can work on a Pocket, it is which side to
-build from. Adding cheats to a core that already does CD is very likely cheaper
-than adding CD to a core that already does cheats, because the CD subsystem is
-the expensive half and it already exists over there. That is the direction being
-looked at.
+- A disc is a `.cue` with its `.bin`, in `Assets/pce/`.
+- Listed as **PC Engine CD**, a separate cheat directory.
+- Cheat file: `<name>.cue.cht`.
 
 ## Cartridges
 
@@ -520,41 +507,43 @@ cartridge path, so cheats here are for ROMs on the card.
 
 ---
 
-# Game Boy Advance writes two files
+# Game Boy Advance
 
-The core is released and verified working. **Game Boy Advance is SD card only**:
-cheats go beside a ROM on the card, and cartridges are unsupported until the
-core supports them.
+SD card only.
 
-It is also the one system where **the file you pick from is not the file the
-handheld reads**, and that is worth understanding before you look in the folder
-and think something went wrong.
+- **Two files per game:** `Game.gba.cht`, the cheats and their names, and
+  `Game.gba.chtbin`, the same cheats packed. GBA `v0.9999.f2a86db` reads
+  either; only `.cht` gives the overlay names. The older `v0.9999` reads only
+  `.chtbin`. Remove cheats with the app, or delete both files.
+- **Decoded:** CodeBreaker and GameShark v1/v2. Undecodable codes are dropped;
+  the row stays, greyed.
+- **ROM codes:** a CodeBreaker write into ROM shows as `patched`. Works on the
+  `v0.9999.f2a86db` core. Its ROM-patch table holds sixteen entries.
+- **Encrypted codes do not work:** GameShark v3, Action Replay v3, CodeBreaker
+  after a `9` line. They are rejected by address plausibility.
+- **Store:** 32 entries. A conditional code spends two.
 
-* **Two files land beside the ROM.** `Game.gba.cht`, which holds the cheats you
-  ticked and their descriptions, and `Game.gba.chtbin`, which is those same
-  cheats packed into the 128-bit entries the core loads. The `.cht` is the one
-  this app reads back, so it is what makes your ticks come back next time. The
-  `.chtbin` is the one the hardware reads. Deleting either by hand will confuse
-  one of the two; use the app, or delete both.
-* **Why not just the `.cht`.** The core cannot parse text. Its cheat engine went
-  into a design that was already at 90 % logic utilisation, and an ASCII parser
-  on the FPGA cost more setup timing than the design had left, so the parse
-  moved here. That is also why the conversion is worth trusting: it is tested on
-  a desktop against the libretro directory rather than inferred from a handheld
-  with no console.
-* **Codes are read, not carried.** CodeBreaker and GameShark v1/v2, decoded.
-  What cannot be decoded is dropped rather than guessed at, and the row stays in
-  the list, greyed, with its description.
-* **Encrypted codes do not work, and cannot be made to.** GameShark v3, Action
-  Replay v3 and CodeBreaker codes after a `9` line are enciphered with a
-  per-game seed, and they are shaped exactly like ordinary ones. They are
-  rejected by plausibility: a real code's address lands in the machine's RAM, an
-  enciphered word almost never does. A few real codes will be refused this way
-  and a few enciphered ones will slip through as pokes at nothing.
-* **The store holds 32 entries**, and a conditional code spends two of them
-  because the engine expresses "if" as a compare entry followed by the entry it
-  guards. The meter counts entries for this system, which is why a cheat can
-  cost more than one.
+---
+
+# Game Gear
+
+The core is available through **Cores...** from `openfpga-GG-cheats`.
+
+- **One file:** the `.cht`. The core reads text and draws the names.
+- **Game Genie** `XXX-XXX-XXX`: ROM read override, `patched`.
+- **Pro Action Replay** `00AA-AADD`: work RAM write, `written`.
+- **Skipped:** codes with `X` or `?`, pokes outside C000-DFFF, fields mixing
+  both kinds. The row stays, greyed.
+- **Store:** 32 codes.
+- Decoded by the core's `gg2bin.py` and `ggcht.py`; matches on all 818 libretro
+  Game Gear files.
+
+---
+
+# Game.com
+
+- Optional core in **Cores...**. No cheats, not listed as a system.
+- Not mentioned anywhere, BIOS included, until it is installed.
 
 ## What it shows
 
@@ -580,17 +569,17 @@ for how that copy is kept honest.
 
 | | |
 |---|---|
-| [docs/CHEATGUI.md](docs/CHEATGUI.md) | the full guide, including the PC Engine code shapes |
+| [docs/CHEATGUI.md](docs/CHEATGUI.md) | the full guide, including the PC Engine and Game Gear code shapes |
 | [docs/INSTALL.md](docs/INSTALL.md) | install notes and how to check a download's signature |
 | [docs/RELEASING.md](docs/RELEASING.md) | releasing, signing, and the state of macOS notarization |
-| [cheats/README.md](cheats/README.md) | the parser shared with the Game Boy core, and how it is kept in step |
+| [cheats/README.md](cheats/README.md) | the parsers copied from the cores, and how they are kept in step |
 
 ## Development
 
 ```sh
 make test          # parser self-test and the GUI tests
 make dist          # build the binary for this platform
-make sync-check    # is the shared parser still in step with the core?
+make sync-check    # are the copied parsers still in step with the cores?
 ```
 
 ## Credits
@@ -608,6 +597,9 @@ code, but it exists because of them.
 | [Torlus/FPGAPCE](https://github.com/Torlus/FPGAPCE) | Gregory Estrade's original, released into the public domain |
 | [mincer-ray/openfpga-GBA](https://github.com/mincer-ray/openfpga-GBA) | the Pocket Game Boy Advance core, GPL-2.0 |
 | [GBA_MiSTer](https://github.com/MiSTer-devel/GBA_MiSTer) | which that is a port of, GPL-2.0 |
+| [SMS_MiSTer](https://github.com/MiSTer-devel/SMS_MiSTer) | which the Game Gear core is ported from |
+| [Genesis Plus GX](https://github.com/ekeeke/Genesis-Plus-GX) | `decode_cheat()`, the reference the Game Gear Game Genie decode was checked against |
+| [GameCom_MiSTer](https://github.com/MiSTer-devel/GameCom_MiSTer) | the Game.com core, by Jamie Blanks (kitrinx) and contributors |
 | [Rai/openfpga-GBA](https://github.com/Rai/openfpga-GBA) | the cartridge-support branch CartTools was cut down from |
 | [SameBoy](https://github.com/LIJI32/SameBoy) | `Core/cheats.c`, the reference the Game Genie decoder follows. Expat (MIT) license, copyright Lior Halphon |
 | [libretro/libretro-database](https://github.com/libretro/libretro-database) | the cheat files themselves |
@@ -633,6 +625,10 @@ which is GPL-3.0-or-later as part of that core; this app is built around them.
 The Game Genie decoding in `ggdecode.py` follows the algorithm in SameBoy's
 `Core/cheats.c` rather than copying its code. SameBoy is under the Expat (MIT)
 license, copyright Lior Halphon.
+
+`cheats/gbacht.py` and `cheats/cht2bin.py` are copies from the Game Boy Advance
+core, GPL-3.0-or-later. `cheats/ggcht.py` and `cheats/gg2bin.py` are copies
+from the Game Gear core, GPL-2.0-or-later, used here under GPL-3.0-or-later.
 
 **The cheat database is not distributed here.**
 [libretro/libretro-database](https://github.com/libretro/libretro-database) is

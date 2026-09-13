@@ -4,7 +4,7 @@
 It replaced a button that decided for you and a yes/no box that confirmed the
 decision, so the thing worth testing is that it hands back what was ticked
 rather than what the app would have chosen. The rest is about the states a row
-can be in: there are four cores from three repositories now, released at
+can be in: there are several cores from several repositories now, released at
 different times, and one with no release at all.
 
 Needs a display. Run under xvfb-run where there is none.

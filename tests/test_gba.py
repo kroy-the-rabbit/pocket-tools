@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Game Boy Advance: decoding, the two files on the card, and the round trip.
 
-This system is the only one where what lands on the card is not the file that
-was picked from. The core cannot parse text, so `writer.write` produces a
+This system is the only one that gets a second file. The released core reads
+only packed entries, so `writer.write` produces a
 `.chtbin` of packed 128-bit entries next to the `.cht` that remains the state
 file. Most of what is worth testing is that those two cannot disagree.
 
@@ -101,10 +101,17 @@ class Decoding(unittest.TestCase):
         self.assertEqual((second >> 96) & 0xF, 0x0)           # the write
         self.assertEqual((second >> 64) & 0x0FFFFFFF, 0x2000534)
 
-    def test_only_one_mechanism_is_claimed(self):
-        # gba_cheats is a poker, not a read override. There is no Game Genie
-        # for this machine, so the Applied column has nothing to distinguish.
-        self.assertEqual(cheatfile.mechanisms("gba"), ("poke",))
+    def test_ram_is_written_and_rom_is_patched(self):
+        # gba_cheats pokes RAM; a CodeBreaker write into ROM is patched on the
+        # read side by rom_patch.sv, so the Applied column has two answers.
+        self.assertEqual(cheatfile.mechanisms("gba"), ("poke", "patch"))
+        for code, kind in (("3300786D+00FF", "poke"),
+                           ("380001A0+00FF", "patch"),
+                           ("880001A0+1234", "patch")):
+            g = gba.parse(('cheat0_desc = "t"\ncheat0_code = "%s"\n'
+                           % code).encode())
+            self.assertEqual([cheatfile.applied_by(c, "gba")
+                              for c in g[0].codes], [kind], code)
 
     def test_the_limit_is_the_cheat_table(self):
         self.assertEqual(cheatfile.limits("gba"), (32, 32))

@@ -4,8 +4,8 @@ Tag it and the workflow does the rest: it builds the picker for Linux, macOS
 and Windows, signs the result, and attaches everything to the GitHub release.
 
 ```sh
-git tag -s v1.0.0 -m "v1.0.0"
-git push origin v1.0.0
+git tag -s v0.9999.BUILT_SHA -m "v0.9999.BUILT_SHA"
+git push origin v0.9999.BUILT_SHA
 ```
 
 The tag drives the version. `.github/workflows/release.yml` strips the leading

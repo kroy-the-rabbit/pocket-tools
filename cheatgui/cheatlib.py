@@ -52,6 +52,7 @@ SEARCH = {
     "gba": ("gba",),
     "pce": ("pce",),
     "pcecd": ("pcecd",),
+    "gg":  ("gg",),
 }
 # A system switched off in card.ENABLED disables itself here: _files_for drops
 # any id that is not in card.SUPPORTED, so an entry above for a system that is

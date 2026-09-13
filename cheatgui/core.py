@@ -96,6 +96,8 @@ GBC_REPO = "kroy-the-rabbit/openfpga-GBC-cheats"
 GBA_REPO = "kroy-the-rabbit/openfpga-GBA-cheats"
 PCE_REPO = "kroy-the-rabbit/openfpga-pcengine-cheats"
 CARTTOOLS_REPO = "kroy-the-rabbit/openfpga-carttools"
+GAMECOM_REPO = "kroy-the-rabbit/openfpga-GameCom"
+GG_REPO = "kroy-the-rabbit/openfpga-GG-cheats"
 
 # The cores this app writes cheat files for.
 #
@@ -136,7 +138,13 @@ CORES = (
     # and reported as unreleased; v0.2.1 renames it. Its manifest check now
     # fails on a directory name with a space, so that cannot recur silently.
     Core("kroy.PCE", "pce", "PC Engine", "kroy.PCE_", PCE_REPO, ()),
-    # The dumper, and the only optional core. It writes no cheat files and
+    # Game Gear needs no boot ROM.
+    Core("kroy.GG", "gg", "Game Gear", "kroy.GG_", GG_REPO, ()),
+    # No cheats. Optional: absent, it is not an update and its BIOS is not
+    # asked for.
+    Core("kroy.GameCom", "gamecom", "Game.com", "kroy.GameCom_", GAMECOM_REPO,
+         (Rom("gamecom_bios.bin", 262144, "Game.com BIOS"),), optional=True),
+    # The dumper, an optional core. It writes no cheat files and
     # reads none: it reads cartridges and writes ROM images to the card, which
     # is the other half of the cartridge dump feature. It is surveyed and
     # offered like every other core, because the installer is where anyone
@@ -164,6 +172,12 @@ def dumper_installed(sv: "Survey | None") -> bool:
     return bool(sv and sv.versions.get(DUMPER))
 
 
+def installed_for(sv: "Survey | None", platform: str) -> bool:
+    """Whether the card carries any core for this platform."""
+    return bool(sv and any(sv.versions.get(c.id)
+                           for c in CORES if c.platform == platform))
+
+
 def repos() -> tuple[str, ...]:
     """Every repository the cores come from, once each, in listed order."""
     out: list[str] = []
@@ -187,9 +201,7 @@ def released(platform: str, rels: dict[str, dict] | None = None) -> bool:
     It answers False, and starts answering True on its own.
 
     A core may also have no repository at all, which answers False the same way
-    but never changes by itself. Every core listed here has one now - the PC
-    Engine was the last without - so that branch is reached only if one is
-    added, which is why the tests build a registry to cover it.
+    but never changes by itself. A newly added core may have no repository yet.
 
     Without `rels` this can only fall back to whether a repository is named,
     which is the best guess available before the release check has answered.
@@ -389,9 +401,7 @@ def latest(repo: str, timeout: int = TIMEOUT) -> dict | None:
     """One repository's newest release, or None when it has none yet.
 
     A repository with no release answers 404, which is an answer rather than a
-    failure. Every core in CORES has a tag now, PC Engine included, so nothing
-    here is expected to answer 404 today; the branch stays because a fork can
-    lose its releases and because a new core is added with none.
+    failure. A fork can lose its releases, and a new core is added with none.
     Anything else raises, so being offline still reads as being offline.
     """
     req = urllib.request.Request(
@@ -408,6 +418,9 @@ def latest(repo: str, timeout: int = TIMEOUT) -> dict | None:
     tag = rel.get("tag_name") or ""
     return {
         "repo": repo,
+        # Every published version, so a card carrying something else can be
+        # told apart from one carrying an older release. None if unread.
+        "published": published(repo, timeout),
         "tag": tag,
         # core.json carries the tag without its leading v, which is what an
         # installed version is compared against.
@@ -416,6 +429,24 @@ def latest(repo: str, timeout: int = TIMEOUT) -> dict | None:
         "assets": {a["name"]: a["browser_download_url"]
                    for a in rel.get("assets") or []},
     }
+
+
+def published(repo: str, timeout: int = TIMEOUT) -> list[str] | None:
+    """The version of every release in a repository, or None if unreadable."""
+    req = urllib.request.Request(
+        f"{API}/{repo}/releases?per_page=100",
+        headers={**UA, "Accept": "application/vnd.github+json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout,
+                                    context=ssl_context()) as f:
+            rels = json.load(f)
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    out = []
+    for r in rels:
+        tag = r.get("tag_name") or ""
+        out.append(tag[1:] if tag.startswith("v") else tag)
+    return out
 
 
 def all_latest(timeout: int = TIMEOUT) -> dict[str, dict]:
@@ -451,9 +482,8 @@ def outdated(versions: dict[str, str | None],
              rels: dict[str, dict]) -> list[Core]:
     """The cores that would change if the newest releases were installed.
 
-    Absent counts, and so does any version that is not the released one:
-    a card carrying a newer local build is still not carrying this release,
-    and saying "up to date" about it would be a guess at which is newer.
+    Absent counts, and so does an older release. A version no release ever
+    carried is a local build and does not count.
 
     A core with no release is never in here. There is nothing to install.
     """
@@ -470,7 +500,13 @@ def outdated(versions: dict[str, str | None],
         # other core.
         if c.optional and versions.get(c.id) is None:
             continue
-        if versions.get(c.id) != rel["version"] and asset_for(c, rels):
+        have = versions.get(c.id)
+        # A version that no release ever carried is a local build. Replacing
+        # it with the release is not an update.
+        known = rel.get("published")
+        if have is not None and known is not None and have not in known:
+            continue
+        if have != rel["version"] and asset_for(c, rels):
             out.append(c)
     return out
 

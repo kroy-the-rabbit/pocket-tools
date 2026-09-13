@@ -314,6 +314,17 @@ class Versions(unittest.TestCase):
         self.assertEqual([c.id for c in core.outdated(every(None), rels)],
                          OFFERED_IDS)
 
+    def test_a_local_build_is_not_outdated(self) -> None:
+        rels = releases("2.0")
+        for rel in rels.values():
+            rel["published"] = ["1.0", "2.0"]
+        self.assertEqual(core.outdated(have(kroy_GBC="2.0-local.abc123"), rels)
+                         and [c.id for c in core.outdated(
+                             have(kroy_GBC="2.0-local.abc123"), rels)
+                             if c.id == GBC.id], [])
+        self.assertIn(GBC, core.outdated(have(kroy_GBC="1.0"), rels))
+        self.assertNotIn(GBC, core.outdated(have(kroy_GBC="2.0"), rels))
+
     def test_an_absent_optional_core_is_not_outdated(self) -> None:
         """It is not behind, it is not installed. Nothing may tick it."""
         rels = releases("1.4.0-cheats.9")
@@ -492,10 +503,8 @@ class Unreleased(unittest.TestCase):
     worse than one that does not appear - but only the first starts working on
     its own.
 
-    The PC Engine used to be the example of the second shape. Its fork is
-    published now, and every core in CORES has a repository, so the
-    no-repository path is covered with a registry built here rather than by
-    dropping the coverage: core.py still branches on it.
+    The no-repository path uses a registry built here so coverage does not
+    depend on leaving a real core unpublished.
     """
 
     NOREPO = core.Core("kroy.NONE", "none", "Nothing", "kroy.NONE_", None, ())
@@ -549,6 +558,40 @@ class Unreleased(unittest.TestCase):
             # exists to be read against the released one, and the bar's job is
             # only to say that something is installed and whether it is stale.
             self.assertIn("1 installed", core.describe(sv, releases("2.0"))[0])
+
+
+class NewCores(Env):
+    """Game Gear installation and the optional Game.com core."""
+
+    GG = BY_ID["kroy.GG"]
+    GAMECOM = BY_ID["kroy.GameCom"]
+
+    def test_game_gear_is_offered_only_with_a_published_package(self) -> None:
+        self.assertEqual(self.GG.repo, "kroy-the-rabbit/openfpga-GG-cheats")
+        self.assertTrue(core.released("gg", releases("2.0")))
+        self.assertIn(self.GG, core.outdated(every(None), releases("2.0")))
+        self.assertNotIn(self.GG, core.outdated(every(None), releases("2.0", repos=[])))
+
+    def test_an_installed_unreleased_core_counts_as_present(self) -> None:
+        self.assertFalse(core.installed_for(None, "gg"))
+        install_core(self.root, self.GG, "0.9999")
+        self.assertTrue(core.installed_for(core.survey(self.root), "gg"))
+        self.assertFalse(core.installed_for(core.survey(self.root), "pce"))
+
+    def test_game_com_is_optional_and_silent_when_absent(self) -> None:
+        self.assertTrue(self.GAMECOM.optional)
+        self.assertNotIn(self.GAMECOM,
+                         core.outdated(every(None), releases("2.0")))
+        install_core(self.root, GBC, "1.0")
+        self.assertNotIn(self.GAMECOM.id,
+                         [r.core.id for r in core.boot_roms(self.root)])
+
+    def test_game_com_names_its_bios_once_installed(self) -> None:
+        install_core(self.root, self.GAMECOM, "1.0")
+        bad = core.survey(self.root).problems()
+        self.assertEqual([r.rom.filename for r in bad], ["gamecom_bios.bin"])
+        self.assertEqual(bad[0].where, os.path.join(
+            "Assets", "gamecom", "common", "gamecom_bios.bin"))
 
 
 class NoBios(Env):

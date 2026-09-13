@@ -10,18 +10,10 @@ regardless of their enable flag, so handing it a 100-cheat libretro file would
 truncate before reaching the one you wanted.
 
 Game Boy Advance writes two files, and this is the only place that has to know
-it. Its core cannot parse text - the cheat engine sits in a design at 95 % logic
-utilisation and an on-FPGA ASCII parser cost more setup timing than the design
-had - so what it reads is `<rom>.chtbin`, packed 128-bit entries. The `.cht` is
-written too, and stays the state file: it carries the descriptions and the
-enable flags, which the binary has no room for and the core has no use for, and
-it is what everything else in the app already reads. The card ends up with an
-editable source next to a compiled artefact, which is what the two files are.
-
-The stray `.cht` the core warns about is a *different* file: one copied to the
-card instead of being converted. This one is deliberate, sits beside a
-`.chtbin` that was made from it, and is never read by the hardware, because
-slot 7 accepts the `chtbin` extension and nothing else.
+it. The older v0.9999 core reads only `<rom>.chtbin`, packed 128-bit entries. The
+current core reads that or the `.cht`, and only the `.cht` carries the names
+its overlay draws. Both are written: the `.cht` stays the state file, with the
+descriptions and enable flags, and the `.chtbin` is compiled from it.
 """
 from __future__ import annotations
 

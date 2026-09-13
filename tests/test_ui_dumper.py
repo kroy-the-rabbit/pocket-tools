@@ -64,9 +64,9 @@ class Registry(unittest.TestCase):
     def test_the_dumper_is_in_the_registry(self):
         self.assertIn("kroy.CartTools", [c.id for c in self.core.CORES])
 
-    def test_it_is_the_only_optional_core(self):
-        self.assertEqual([c.id for c in self.core.CORES if c.optional],
-                         ["kroy.CartTools"])
+    def test_it_is_optional(self):
+        c = next(c for c in self.core.CORES if c.id == "kroy.CartTools")
+        self.assertTrue(c.optional)
 
     def test_its_repository_is_asked_for_releases(self):
         """Always: the installer offers it whether or not the card has it."""

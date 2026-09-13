@@ -7,16 +7,13 @@ reference model the core's own converter parses with and is checked against all
 adapter between that and the shapes the rest of the app expects; the decoding
 itself is not here and should not be.
 
-Two things make this system different from the other three.
+Two things make this system different from the others.
 
-**The core does not read text.** Game Boy, Game Boy Color and PC Engine all
-read a `.cht` off the card directly. The GBA core cannot: its cheat engine sits
-in a design at 95 % logic utilisation, and an on-FPGA ASCII parser measured 441
-ALMs but grew the design by 1,285 and cost 0.54 ns of setup timing, which is
-the difference between a core that runs and one that does not exist. So the
-parse happens here, and what lands on the card is `.chtbin`, a 16-byte header
-and one 16-byte entry per code. `writer.py` writes both that and the `.cht` it
-came from; see there for why both.
+**Two files go on the card.** The older v0.9999 core reads only `.chtbin`, a
+16-byte header and one 16-byte entry per code, because its first cheat engine
+had no room for an on-FPGA text parser. The current core reads the `.cht`
+too, and draws each cheat's name on the overlay from it; a `.chtbin` carries
+no names. `writer.py` writes both, so either core finds a file it reads.
 
 **A cheat's size is not its code count.** Everywhere else one code is one slot
 in the core's store. Here one code becomes one 128-bit *entry*, and the store
@@ -55,10 +52,9 @@ class Code:
     """One decoded entry, shaped like `ggdecode.Cheat` so the UI needs no
     special case.
 
-    `kind` is always "poke". `gba_cheats` is a poker, not a read override: on
-    vblank it waits for the memory bus to go idle, pauses the CPU and writes
-    each entry through the debug bus. There is no Game Genie for this machine
-    and nothing here patches a ROM read.
+    `kind` is "poke" for a write into RAM, which `gba_cheats` makes through
+    the debug bus on vblank, and "patch" for a CodeBreaker write into ROM,
+    which the core applies on the read side (`rom_patch.sv`).
 
     `raw` is `gbacht`'s canonical name for the entry, not the file's own
     spelling, because the file's spelling cannot be recovered - `+` separates
@@ -83,7 +79,8 @@ class Group:
 
 
 def _code(entry) -> Code:
-    return Code(entry.raw, "poke", entry.address, entry.value)
+    kind = "patch" if gbacht.address_is_rom(entry.address) else "poke"
+    return Code(entry.raw, kind, entry.address, entry.value)
 
 
 NO_LIMIT = gbacht.NO_LIMIT
@@ -124,8 +121,9 @@ def parse(data: bytes, max_groups: int = NO_LIMIT) -> list:
 
 
 def applied_by(code) -> str:
-    """How the core makes one code take effect. Always the same answer."""
-    return "poke"
+    """How the core makes one code take effect: a RAM write or a ROM patch."""
+    addr = getattr(code, "address", None)
+    return "patch" if addr is not None and gbacht.address_is_rom(addr) else "poke"
 
 
 def pack(groups: list) -> bytes:

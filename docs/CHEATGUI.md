@@ -76,8 +76,8 @@ as everything else rather than adding a freeze of its own.
 **Cores...** opens a dialog rather than acting. It was a button that decided
 what to install and a yes/no box that confirmed the decision, which held while
 there was one repository and two cores that always shipped together. There are
-four cores now, from three repositories, released at different times and at
-different versions, so "install the core" stopped being one question with one
+several cores now, from several repositories, released at different times and
+at different versions, so "install the core" stopped being one question with one
 answer. The dialog shows a row per core -
 what the card has, what is available, and whether it can be installed at all -
 and hands back exactly what was ticked. A row that cannot be ticked says which
@@ -164,8 +164,8 @@ Three panes: the systems on the card, the games in the selected system, and the
 cheats for the selected game. Tick the ones you want and press **Send to
 Pocket**.
 
-**Game Boy**, **Game Boy Color**, **Game Boy Advance**, **PC Engine** and
-**PC Engine CD** are listed. An NES or SNES core on the same card ignores cheat
+**Game Boy**, **Game Boy Color**, **Game Boy Advance**, **PC Engine**,
+**PC Engine CD** and **Game Gear** are listed. An NES or SNES core on the same card ignores cheat
 files entirely, so offering checkboxes there would be a lie. A disc and a
 HuCard sit in the same folder on the card and appear as two systems here,
 because they are two cheat corpora.
@@ -237,39 +237,17 @@ There is no code store meter for PC Engine, only a count. The core has not
 fixed a poker table size, and a number on screen that no hardware agrees with
 is worse than none.
 
-## Game Boy Advance is the one system we compile for
+## Game Boy Advance writes a compiled file too
 
-Every other core reads the `.cht` off the card. The GBA core cannot: its cheat
-engine went into a design already at 90 % logic utilisation, and an ASCII
-parser on the FPGA measured 441 ALMs but grew the design by 1,285 and cost
-0.54 ns of setup timing, which is the difference between a core that runs and
-one that does not exist. So the parse happens here and the core reads packed
-128-bit entries.
-
-That inverts the usual relationship. Everywhere else this app *models* the
-core's parser and drift means the display is wrong; here it *is* the parser,
-and drift means the cheat is wrong. `cheats/README.md` says so where the copies
-live.
-
-Two files land beside the ROM, and `writer.py` is the only place that knows it:
-
-    Game.gba.cht      the cheats, their descriptions and their enable flags.
-                      The state file: it is what the app reads back to know
-                      what is ticked, and what everything else in the app
-                      already understands.
-    Game.gba.chtbin   the same cheats as a 16-byte header and one 16-byte
-                      entry each. What the hardware reads, and the only thing
-                      it reads - slot 7 accepts that extension and no other.
-
-The `.cht` beside it is therefore inert as far as the core is concerned, which
-is what makes keeping it safe. It is not the stray `.cht` the core's own docs
-warn about; that one is a file copied to the card *instead* of being converted,
-and the `.chtbin` header magic exists so that renaming one loads zero cheats
-rather than shifting ASCII into the cheat table.
-
-Ordering is the part worth being careful about, and `writer.write` does it
-deliberately: the compiled file is written last and removed first, so that the
-moment the hardware's behaviour changes is never ahead of the record of why.
+- The older `v0.9999` core reads only `.chtbin`, packed 128-bit entries.
+  `v0.9999.f2a86db` also reads `.cht` and draws the cheat names.
+- For the older binary-only core `gbacht.py` is the parser, not a model of
+  it: drift breaks the cheat.
+- `writer.py` writes `Game.gba.cht` (the state file) and `Game.gba.chtbin`.
+  The `.chtbin` is written last and removed first.
+- A CodeBreaker write into ROM is a `patch`, applied on the read side by the
+  `v0.9999.f2a86db` release (`rom_patch.sv`, sixteen ROM-patch slots).
+  8+8 code forms stay RAM only.
 
 One more thing differs. A cheat's cost is not its code count. One code becomes
 one 128-bit entry, the table holds 32, and a conditional code spends two
@@ -277,6 +255,24 @@ because `gba_cheats` expresses "if" as a compare entry immediately followed by
 the entry it guards. `gba.py` hands out one code per entry so the meter and the
 limit check stay honest with a single number, and nothing anywhere may sort or
 reorder them: adjacency is the conditional.
+
+## Game Gear
+
+One file, the `.cht`; the core reads text.
+
+| | | |
+|---|---|---|
+| Game Genie | `XXX-XXX-XXX`, or `XXX-XXX` with no compare | ROM read override, `patched` |
+| Pro Action Replay | `00AA-AADD` | work RAM write at C000-DFFF, `written` |
+
+- `gg.py` decodes through `gg2bin.py` and `ggcht.py`, copies of the core's
+  reference model.
+- A field is split on `+` and `-` and regrouped by group width, as the core
+  does.
+- Skipped: mixed widths, `X` or `?` placeholders, pokes outside work RAM.
+- All 818 libretro Game Gear files match `gg2bin.model` and write back
+  unchanged.
+- Store: 32 codes of either kind.
 
 ## Codes we cannot read are carried, not guessed
 

@@ -17,9 +17,8 @@ Every code in the file comes out looking plausible and meaning nothing, and a
 file written back from that has lost half of itself.
 
 So each system has its own reader, and the choice of reader is the whole of
-this module. `gba.py` reads Game Boy Advance and `pce.py` reads PC Engine; what
-those two have in common, and do not share with Game Boy, is that there is only
-one kind of code, because neither machine has a Game Genie. See MECHANISMS.
+this module. `gba.py` reads Game Boy Advance, `pce.py` reads PC Engine and
+`gg.py` reads Game Gear. See MECHANISMS for how each core applies a code.
 
 A system whose codes cannot be decoded is carried verbatim instead: listed,
 picked and written back exactly as it came, with nothing claimed about what any
@@ -34,6 +33,7 @@ from typing import Optional
 
 import chtparse
 import gba as gba_mod
+import gg as gg_mod
 import pce as pce_mod
 
 # Systems whose codes can be read rather than merely carried. Game Boy and
@@ -44,7 +44,7 @@ import pce as pce_mod
 # through gba.py, which adapts `gbacht` - the same relationship chtparse has to
 # the Game Boy core, except that on this system the decoder is what produces
 # the file the hardware reads rather than a model of a parser inside it.
-DECODED = ("gb", "gbc", "gba", "pce", "pcecd")
+DECODED = ("gb", "gbc", "gba", "pce", "pcecd", "gg")
 
 # How many ways a system's core can make a code take effect.
 #
@@ -57,9 +57,10 @@ DECODED = ("gb", "gbc", "gba", "pce", "pcecd")
 MECHANISMS = {
     "gb":  ("poke", "patch"),
     "gbc": ("poke", "patch"),
-    "gba": ("poke",),
+    "gba": ("poke", "patch"),   # ROM writes are patched on the read side
     "pce": ("poke",),
     "pcecd": ("poke",),     # a disc's cheats are the same RAM pokes
+    "gg":  ("poke", "patch"),   # Pro Action Replay and Game Genie
 }
 
 # What the core can hold. No limit is claimed for a system whose core has not
@@ -74,6 +75,9 @@ LIMITS = {
     "gb":  (chtparse.MAX_GROUPS, chtparse.MAX_CODES),
     "gbc": (chtparse.MAX_GROUPS, chtparse.MAX_CODES),
     "gba": (gba_mod.MAX_ENTRIES, gba_mod.MAX_ENTRIES),
+    # Game Gear: one CODES table of 32 entries, one per code of either kind,
+    # and cheat_titles holds 32 names.
+    "gg":  (gg_mod.MAX_CODES, gg_mod.MAX_CODES),
 }
 
 # Reading a file to choose from is not reading it to run. The core takes the
@@ -169,6 +173,8 @@ def parse(data: bytes, platform: str, max_groups: int = NO_LIMIT) -> list:
         return gba_mod.parse(data, max_groups=max_groups)
     if platform in ("pce", "pcecd"):
         return pce_mod.parse(data, max_groups=max_groups)
+    if platform == "gg":
+        return gg_mod.parse(data, max_groups=max_groups)
     if decoded(platform):
         return chtparse.parse(data, max_codes=NO_LIMIT, max_groups=max_groups)
     return parse_opaque(data, max_groups=max_groups)
@@ -180,6 +186,8 @@ def applied_by(code, platform: str) -> str:
         return gba_mod.applied_by(code)
     if platform in ("pce", "pcecd"):
         return pce_mod.applied_by(code)
+    if platform == "gg":
+        return gg_mod.applied_by(code)
     if not decoded(platform):
         return ""
     return chtparse.applied_by(code)

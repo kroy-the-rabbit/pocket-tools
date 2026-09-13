@@ -8,21 +8,22 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPOS="$(cd "$HERE/../.." && pwd)"
 
-# file:repo. Two cores, because the Game Boy work and the Game Boy Advance work
-# are separate forks of separate upstreams and neither is a dependency of this
-# app.
+# file:repo. One entry per core that owns a parser, because each core is a
+# separate fork of a separate upstream and none is a dependency of this app.
 COPIES=(
   "chtparse.py:pocket-gbc"
   "ggdecode.py:pocket-gbc"
   "gbacht.py:pocket-gba"
   "cht2bin.py:pocket-gba"
+  "ggcht.py:pocket-gg"
+  "gg2bin.py:pocket-gg"
 )
 
 rc=0
 for entry in "${COPIES[@]}"; do
   f="${entry%%:*}"
   name="${entry##*:}"
-  # POCKET_GBC_REPO / POCKET_GBA_REPO override the location of either.
+  # POCKET_GBC_REPO, POCKET_GBA_REPO and POCKET_GG_REPO override the locations.
   var="POCKET_$(echo "${name#pocket-}" | tr '[:lower:]' '[:upper:]')_REPO"
   core="${!var:-$REPOS/$name}"
 

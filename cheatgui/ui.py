@@ -1835,10 +1835,10 @@ class App(ttk.Frame):
             msg += f" ({written} written, {patched} patched)"
         if not cheatfile.decoded(v.platform):
             msg += "   codes carried as written; nothing reads them yet"
-        elif not core_mod.released(v.platform, self.releases):
+        elif (not core_mod.released(v.platform, self.releases)
+              and not core_mod.installed_for(self.survey, v.platform)):
             # Readable codes and a correct file, and still nothing on the
-            # handheld that will act on it. Worth saying, since everything
-            # else on screen looks exactly like a system that works.
+            # handheld that will act on it. A core already on the card will.
             msg += (f"   the {self.platform_name(v.platform)} core is not "
                     "released yet")
         # Ticking nothing and sending is how you take cheats off a game, and
@@ -2063,8 +2063,8 @@ class CoresDialog(tk.Toplevel):
 
     This was a single "Install core" button and a yes/no box listing whatever
     the app had decided to write. That worked while there was one repository
-    and two cores that always shipped together. There are four cores now, from
-    three repositories, released at different times and at different versions,
+    and two cores that always shipped together. There are several cores now, from
+    several repositories, released at different times and at different versions,
     and one of them has no release at all - so "install the core" stopped being
     one question with one answer.
 

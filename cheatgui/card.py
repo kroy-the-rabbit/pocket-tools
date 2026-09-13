@@ -93,6 +93,7 @@ KNOWN = {
     # loads both. It is a separate system here because it is a separate cheat
     # corpus, and a HuCard cheat matched to a disc would be a wrong match.
     "pcecd": ("NEC - PC Engine CD - TurboGrafx-CD", ".cue"),
+    "gg":  ("Sega - Game Gear", ".gg"),
     # The dumper. Both fields are empty because neither exists for it: it is
     # not a system you play, so libretro has no cheat directory for it, and its
     # output carries .gb, .gbc or .gba rather than an extension of its own. The
@@ -109,9 +110,9 @@ KNOWN = {
 # game list and a set of checkboxes that could do nothing in either direction.
 # Both halves of that have since stopped being true: the core defines slot 7,
 # and gbacht decodes CodeBreaker and GameShark against the whole libretro
-# directory. What it does not do is read text on the handheld, so this is the
-# one system where what lands on the card is not the file that was picked from.
-# See gba.py, and writer.py for the two files.
+# directory. The released core reads only a compiled `.chtbin`, so this is the
+# one system that gets a second file beside the `.cht`. See gba.py, and
+# writer.py for the two files.
 #
 # **PC Engine is on**, and its core is released and verified working, so a file
 # written for a PC Engine game takes effect like any other: see pce.py.
@@ -140,7 +141,9 @@ KNOWN = {
 # for, and the dumper reads none and writes none: it produces ROM images. Its
 # dumps reach the app through dumps.py and the Cartridge dumps category, not
 # through this list. See core.CORES, where it is a core like any other.
-ENABLED = ("gb", "gbc", "gba", "pce", "pcecd")
+# Game Gear: the core reads the `.cht`, Game Genie and Pro Action Replay. See
+# gg.py.
+ENABLED = ("gb", "gbc", "gba", "pce", "pcecd", "gg")
 
 # Which Assets folder a system's files live in, where it is not the id. A
 # disc and a HuCard share the Pocket's `pce` platform and its folder; the
@@ -172,6 +175,7 @@ DISPLAY = {
     "gba": "Game Boy Advance",
     "pce": "PC Engine",
     "pcecd": "PC Engine CD",
+    "gg":  "Game Gear",
 }
 
 # Folders skipped when listing games. Romhacks are usually pre-patched variants
