@@ -39,10 +39,10 @@ This app runs on a computer; the cores below run on the handheld.
 | | | |
 |---|---|---|
 | **pocket-tools** | this app | reads the card, picks cheats, installs cores, files dumps |
-| [openfpga-GBC-cheats](https://github.com/kroy-the-rabbit/openfpga-GBC-cheats) | Game Boy, Game Boy Color | cheats on a ROM or on a real cartridge |
-| [openfpga-GBA-cheats](https://github.com/kroy-the-rabbit/openfpga-GBA-cheats) | Game Boy Advance | cheats on a ROM, SD card only |
-| [openfpga-pcengine-cheats](https://github.com/kroy-the-rabbit/openfpga-pcengine-cheats) | PC Engine, TurboGrafx-16, PC Engine CD | cheats on a ROM or a disc, SD card only |
-| [Game Gear core](https://github.com/kroy-the-rabbit/openfpga-GG-cheats) | Game Gear | cheats on a ROM, SD card only |
+| [openfpga-GBC-cheats](https://github.com/kroy-the-rabbit/openfpga-GBC-cheats) | Game Boy, Game Boy Color | ROM and cartridge cheats |
+| [openfpga-GBA-cheats](https://github.com/kroy-the-rabbit/openfpga-GBA-cheats) | Game Boy Advance | ROM and cartridge cheats |
+| [openfpga-pcengine-cheats](https://github.com/kroy-the-rabbit/openfpga-pcengine-cheats) | PC Engine, TurboGrafx-16, PC Engine CD | HuCard and CD ISO cheats (cue + bin on SD) |
+| [Game Gear core](https://github.com/kroy-the-rabbit/openfpga-GG-cheats) | Game Gear | ROM cheats from SD |
 | [openfpga-GameCom](https://github.com/kroy-the-rabbit/openfpga-GameCom) | Game.com | plays SD card ROMs, no cheats. Optional |
 | [openfpga-carttools](https://github.com/kroy-the-rabbit/openfpga-carttools) | GB, GBC, GBA | dumps cartridges, does not play them. Optional: install it and the dump features appear |
 
