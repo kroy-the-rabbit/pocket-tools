@@ -4,11 +4,6 @@ The desktop side of a set of Analogue Pocket cores. It reads your SD card, picks
 cheats for the games on it, installs and updates the cores, and files the
 cartridge dumps they produce.
 
-This app is original work. It writes files that other people's cores read, and
-it contains none of their code. What it is built around is the libretro cheat
-database, which it fetches rather than ships, and a Game Genie decoder that
-follows SameBoy's algorithm. See [Credits](#credits).
-
 > **Use at your own risk. Cheats can corrupt save files.**
 >
 > A cheat is not a setting, it is a write into the memory of a running game. A
@@ -621,8 +616,9 @@ make sync-check    # are the copied parsers still in step with the cores?
 
 ## Credits
 
-This app writes cheat files for other people's cores. It contains none of their
-code, but it exists because of them.
+This app is original work that writes cheat files for other people's cores.
+It fetches the libretro cheat database at runtime and follows SameBoy's
+Game Genie decoding algorithm. Core code is not bundled in the app.
 
 | | |
 |---|---|
