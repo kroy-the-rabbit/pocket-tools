@@ -72,6 +72,7 @@ SYSTEMS = {
     "gb":  "Nintendo - Game Boy",
     "gbc": "Nintendo - Game Boy Color",
     "gba": "Nintendo - Game Boy Advance",
+    "gg":  "Sega - Game Gear",
 }
 
 # The two flavours that parse. Which one was loaded is recorded for the sake of
@@ -214,9 +215,8 @@ class Dat:
 class Catalog:
     """The DATs loaded so far, which is normally not all of them.
 
-    All three systems are wanted before the feature is much use, and any one of
-    them is useful on its own for what it covers, so nothing here treats a gap
-    as an error. `missing()` is what a status line asks.
+    Each system is useful on its own. Missing catalogues are reported by
+    `missing()` without preventing lookups in the ones already loaded.
     """
     dats: dict[str, Dat] = field(default_factory=dict)
 
@@ -224,7 +224,7 @@ class Catalog:
         """Load a downloaded file. Returns the system it covers, or None.
 
         The system is read out of the DAT's own header, so the user can hand
-        over the three zips in any order without saying what each one is. It
+        over the zips in any order without saying what each one is. It
         is only guessed from the header: a file whose header names a system
         this app does not handle is refused rather than filed under a system
         it might not be, unless the caller says which one it is.

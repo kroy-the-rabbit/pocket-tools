@@ -373,6 +373,14 @@ a button that opens No-Intro's download page. Take the DAT or the Parent-Clone
 DAT for each system; the DB Export is a different format and cannot be read.
 Nothing is fetched for you and nothing is bundled.
 
+Game Gear dumps use the **Sega - Game Gear** DAT. The app reads their Sega
+header for a product code, revision and region hint; it contains no game title,
+and its size field is not a reliable ROM capacity. Complete-file hashes decide
+the identity and canonical `.gg` filename. Header hints use the first signature
+at `0x1FF0`, `0x3FF0`, then `0x7FF0`, matching CartTools; conflicting headers are
+reported. Import keeps the original dump and
+leaves the card copy in place.
+
 Then it is a list you work in. Tick what you want and press the button that says
 what happens to it:
 

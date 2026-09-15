@@ -2870,6 +2870,14 @@ class DumpsDialog(tk.Toplevel):
                 "revision the DAT does not carry, or a reproduction "
                 "cartridge. Nothing here can tell those apart, so no name is "
                 "suggested.")
+            if d.header.platform == "gg":
+                h = d.header
+                lines.append(
+                    f"Sega header hint: product {h.code or 'unknown'}, "
+                    f"revision {h.version}, region {h.region:X}. "
+                    "It supplies no game title or reliable ROM size.")
+                if h.warnings:
+                    lines.append("Header: " + "; ".join(h.warnings) + ".")
         elif prop.verdict is dumps.Verdict.UNREADABLE:
             lines.append(prop.note or "Something is in the way of reading it.")
         elif prop.verdict is dumps.Verdict.MISSING:
@@ -3626,7 +3634,7 @@ class DatDialog(tk.Toplevel):
     """The No-Intro DAT files, found where the browser left them.
 
     Asking somebody to go and find these in a file chooser was the wrong
-    question. There are exactly three of them, their names are fixed by the
+    question. Their names are fixed by the
     site that issues them, and they land in the one directory a browser puts
     downloads in - so the app can look, say what it found, and let the answer
     be a tick rather than a filesystem expedition. Browse... is still here for
@@ -3677,9 +3685,7 @@ class DatDialog(tk.Toplevel):
         self.tree.heading("kind", text="What it is")
         self.tree.heading("entries", text="Entries")
         self.tree.column("#0", width=340, stretch=True)
-        # "Nintendo - " on every row of a window that is only ever about
-        # Nintendo handhelds is 11 characters of nothing, and it was pushing
-        # the filename - the part that tells two downloads apart - out of view.
+        # Leave the maker out of this narrow column.
         self.tree.column("system", width=150, stretch=False)
         self.tree.column("kind", width=120, stretch=False, anchor="center")
         self.tree.column("entries", width=80, stretch=False, anchor="e")
@@ -3780,20 +3786,17 @@ class DatDialog(tk.Toplevel):
     def filename(path: str) -> str:
         """The download's name, without the maker the next column repeats.
 
-        Every one of these begins "Nintendo - ", which is 11 characters of the
-        one thing that is the same on every row, in the column whose whole job
-        is telling two downloads apart. The date stamp is the part that
-        matters and it is at the other end.
+        Keep the system and date stamp; the maker is already implied.
         """
         name = os.path.basename(path)
-        return name[len("Nintendo - "):] if name.startswith("Nintendo - ") \
-            else name
+        return name.partition(" - ")[2] \
+            if name.startswith(("Nintendo - ", "Sega - ")) else name
 
     @staticmethod
     def plainly(system: str) -> str:
         """The system, without the maker every row would repeat."""
         full = nointro.SYSTEMS.get(system, "")
-        return full[len("Nintendo - "):] if full else ""
+        return full.partition(" - ")[2] if full else ""
 
     @staticmethod
     def short(path: str) -> str:

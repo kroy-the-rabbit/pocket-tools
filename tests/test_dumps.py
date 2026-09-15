@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import io
 import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -62,6 +64,14 @@ def gba_rom(title: bytes, code: bytes = b"AZ7E", filler: bytes = b"\x02",
     data[0xAC:0xB0] = code
     data[dumps.GBA_FIXED_AT] = dumps.GBA_FIXED
     data[dumps.GBA_SUM_AT] = (-(sum(data[0xA0:dumps.GBA_SUM_AT]) + 0x19)) & 0xFF
+    return bytes(data)
+
+
+def gg_rom(size: int = 0x8000, offset: int = 0x7FF0) -> bytes:
+    """Synthetic Sega header; deliberately no valid diagnostic checksum."""
+    data = bytearray(b"\x55" * size)
+    data[0x134:0x143] = b"FAKE_GAME_TITLE"
+    data[offset:offset + 16] = b"TMR SEGA\x00\x00\x21\x43\x34\x12\x03\x6c"
     return bytes(data)
 
 
@@ -137,7 +147,7 @@ class Env(unittest.TestCase):
         return full
 
     def catalog(self, **systems) -> nointro.Catalog:
-        """A Catalog over synthetic DATs. Keys are gb, gbc, gba."""
+        """A Catalog over synthetic DATs. Keys are Pocket system ids."""
         cat = nointro.Catalog()
         dats = os.path.join(self.tmp.name, "dats")
         os.makedirs(dats, exist_ok=True)
@@ -205,6 +215,66 @@ class HeaderTest(unittest.TestCase):
         self.assertEqual(head.platform, "gba")
         self.assertEqual(head.title, "GBAZELDA_MC")
         self.assertEqual(head.code, "BZME")
+
+    def test_game_gear_reads_each_header_location_without_inventing_a_title(self):
+        for offset, size in ((0x1FF0, 0x2000), (0x3FF0, 0x4000),
+                             (0x7FF0, 0x8000)):
+            with self.subTest(offset=offset):
+                head = dumps.header(gg_rom(size, offset))
+                self.assertEqual(head.platform, "gg")
+                self.assertEqual(head.title, "")
+                self.assertEqual(head.code, "01234")
+                self.assertEqual((head.version, head.region), (3, 6))
+                self.assertEqual(head.offsets, (offset,))
+                self.assertEqual(head.checksum_size, 32768)
+
+    def test_a_truncated_sega_header_is_not_identified(self):
+        for offset in (0x1FF0, 0x3FF0, 0x7FF0):
+            self.assertFalse(dumps.header(gg_rom(offset + 16, offset)[:-1]))
+
+    def test_sega_header_disagreements_remain_metadata(self):
+        data = bytearray(gg_rom())
+        data[0x1FF0:0x2000] = data[0x7FF0:0x8000]
+        data[0x7FFF] = 0x5F
+        data[0x1FFC] = 0xFA
+        data[0x1FFF] = 0x31
+        head = dumps.header(data)
+        self.assertEqual(head.platform, "gg")
+        self.assertEqual(head.offsets, (0x1FF0, 0x7FF0))
+        self.assertEqual(head.code, "")
+        self.assertEqual(head.region, 3)
+        self.assertEqual(head.checksum_size, 524288)
+        self.assertIn("conflicting Sega headers", head.warnings)
+        self.assertIn("product code is not valid BCD", head.warnings)
+        self.assertIn("region does not identify Game Gear", head.warnings)
+
+    def test_header_priority_matches_carttools_and_keeps_all_locations(self):
+        data = bytearray(gg_rom())
+        for offset, code in ((0x1FF0, 0x11), (0x3FF0, 0x22)):
+            data[offset:offset + 16] = data[0x7FF0:0x8000]
+            data[offset + 12] = code
+        head = dumps.header(data)
+        self.assertEqual(head.offsets, (0x1FF0, 0x3FF0, 0x7FF0))
+        self.assertEqual(head.code, "01211")
+        self.assertEqual(head.raw, bytes(data[0x1FF0:0x2000]))
+        self.assertIn("conflicting Sega headers", head.warnings)
+
+    def test_disk_header_probe_reads_at_most_560_bytes(self):
+        class Tracked(io.BytesIO):
+            reads = []
+
+            def read(self, size=-1):
+                self.reads.append((self.tell(), size))
+                return super().read(size)
+
+        source = Tracked(gg_rom(size=1024 * 1024))
+        with mock.patch("builtins.open", return_value=source):
+            head = dumps.read_header("GG0000.gg")
+        self.assertEqual(head.platform, "gg")
+        self.assertLessEqual(sum(n for _, n in source.reads), 560)
+        self.assertTrue(all(n >= 0 for _, n in source.reads))
+        self.assertEqual({at for at, _ in source.reads},
+                         {0, 0x1FF0, 0x3FF0, 0x7FF0})
 
     def test_an_underscore_in_the_header_survives(self):
         self.assertEqual(dumps.header(gba_rom(b"GOLDEN_SUN_A")).title,
@@ -335,7 +405,7 @@ class IdentifyTest(Env):
         found = self.dumps.identify(dump, cat)
         self.assertIs(found.outcome, nointro.Outcome.UNKNOWN)
         self.assertEqual(set(found.searched), {"gb", "gbc", "gba"})
-        self.assertIn("Searched all three", self.dumps.dat_note(cat))
+        self.assertIn("No data loaded for Sega - Game Gear", self.dumps.dat_note(cat))
 
     def test_the_note_names_the_gap_when_one_dat_is_missing(self):
         cat = self.catalog(gb=[{"name": "Tetris (World)",
@@ -367,6 +437,53 @@ class IdentifyTest(Env):
         self.assertTrue(self.dumps.readback(dump, crc_of(rom)))
         self.assertTrue(self.dumps.readback(dump, crc_of(rom).upper()))
         self.assertFalse(self.dumps.readback(dump, "deadbeef"))
+
+
+class GameGearImportTest(Env):
+    def test_a_gg_dat_identifies_and_imports_both_copies(self):
+        rom = gg_rom(size=262144)
+        original = self.put("GG0000.gg", rom)
+        canonical = "Widget Gear (World).gg"
+        cat = self.catalog(gg=[{"name": "Widget Gear (World)",
+                               "rom": canonical, "data": rom}])
+        dump = self.dumps.read(original)
+        self.assertEqual(dump.platform, "gg")
+        self.assertFalse(dump.renamed)   # no title in a Sega header
+        identity = self.dumps.identify(dump, cat)
+        self.assertEqual((identity.system, identity.name), ("gg", canonical))
+        index = self.index()
+        prop = self.dumps.propose(dump, identity, self.root, index)
+        filed = self.dumps.commit(prop, index)
+        self.assertTrue(filed.ok, filed.problem)
+        self.assertTrue(filed.verified)
+        self.assertEqual(self.read(filed.rom_path), rom)
+        self.assertEqual(self.read(filed.dump_path), rom)
+        self.assertEqual(os.path.basename(filed.dump_path), "GG0000.gg")
+        self.assertEqual(self.read(original), rom)
+        self.assertEqual(self.index().get(dump.sha1).system, "gg")
+
+    def test_hash_authority_survives_wrong_extension_and_missing_sega_header(self):
+        rom = bytearray(gg_rom())
+        rom[0x7FF0] ^= 1
+        original = self.put("WRONG.gba", bytes(rom))
+        cat = self.catalog(gg=[{"name": "Widget Gear (World)",
+                               "rom": "Widget Gear (World).gg", "data": rom}])
+        dump = self.dumps.read(original)
+        self.assertFalse(dump.header)
+        identity = self.dumps.identify(dump, cat)
+        self.assertEqual(identity.system, "gg")
+        self.assertEqual(identity.name, "Widget Gear (World).gg")
+
+    def test_unknown_gg_header_does_not_create_an_importable_identity(self):
+        dump = self.dumps.read(self.put("GG0000.gg", gg_rom()))
+        cat = self.catalog(gg=[{"name": "Different Gear (World)",
+                               "rom": "Different Gear (World).gg",
+                               "data": gg_rom(size=262144)}])
+        identity = self.dumps.identify(dump, cat)
+        self.assertIs(identity.outcome, nointro.Outcome.UNKNOWN)
+        prop = self.dumps.propose(dump, identity, self.root, self.index())
+        self.assertFalse(prop.actionable)
+        self.assertIsNone(identity.name)
 
 
 # ---------------------------------------------------------------- prong 3 --

@@ -74,12 +74,17 @@ import say
 # rather than about the spec.
 DUMP_DIR = ("Assets", card.DUMPER, "common")
 
-# Enough of the front of a file to hold any header this reads. The Game Boy
-# header ends at 0x14F and the Game Boy Advance one at 0xBF.
+# The Nintendo headers fit here. Sega headers are read separately by seeking
+# to three fixed offsets, so scanning does not read 32 KiB per unknown file.
 HEADER = 0x200
+GG_HEADER_OFFSETS = (0x1FF0, 0x3FF0, 0x7FF0)
+GG_HEADER_SIZE = 16
+GG_CHECKSUM_SIZES = {0xA: 8192, 0xB: 16384, 0xC: 32768, 0xD: 49152,
+                     0xE: 65536, 0xF: 131072, 0: 262144, 1: 524288,
+                     2: 1048576}
 
 # Nothing smaller than this can carry a header, so it is not a dump whatever it
-# is called. The smallest real cartridge is 32 KB; this is deliberately far
+# is called. Real cartridge ROMs are larger; this is deliberately far
 # below that, because refusing a file is a judgement and the cheap version of
 # that judgement should only catch things that are certainly not ROMs.
 MIN_DUMP = HEADER
@@ -157,9 +162,15 @@ class Header:
     a dump no DAT has, which is the one case where there is nothing else to
     say.
     """
-    platform: str = ""     # gb, gbc, gba, or "" when nothing recognised it
+    platform: str = ""     # gb, gbc, gba, gg; always a hint
     title: str = ""        # the stem the core would have written
     code: str = ""         # game or manufacturer code, when the header has one
+    version: int | None = None
+    region: int | None = None
+    checksum_size: int | None = None  # GG checksum extent, not ROM capacity
+    offsets: tuple[int, ...] = ()    # every complete Sega header found
+    raw: bytes = b""                 # preferred Sega header, unmodified
+    warnings: tuple[str, ...] = ()
 
     def __bool__(self) -> bool:
         return bool(self.platform)
@@ -204,14 +215,53 @@ def header(data: bytes) -> Header:
         code = data[GBA_CODE_AT:GBA_CODE_AT + GBA_CODE_LEN].decode(
             "ascii", "replace").strip("\x00 ")
         return Header("gba", core_stem(raw), code)
-    return Header()
+    return _gg_header((offset, data[offset:offset + GG_HEADER_SIZE])
+                      for offset in GG_HEADER_OFFSETS)
+
+
+def _gg_header(candidates) -> Header:
+    """Sega metadata; there is no ASCII title or mapper/save-type field.
+
+    The same signature is used by Master System software. Use the first
+    signature in address order, matching CartTools, and record disagreements.
+    No field here
+    can override an identification by the complete file's hash.
+    """
+    found = [(offset, raw) for offset, raw in candidates
+             if len(raw) == GG_HEADER_SIZE and raw[:8] == b"TMR SEGA"]
+    if not found:
+        return Header()
+    raw = found[0][1]
+    warnings = []
+    if any(other != raw for _, other in found[1:]):
+        warnings.append("conflicting Sega headers")
+    if raw[15] >> 4 not in (5, 6, 7):
+        warnings.append("region does not identify Game Gear")
+    code = ""
+    if all((byte & 15) <= 9 and (byte >> 4) <= 9 for byte in raw[12:14]):
+        bcd = lambda byte: (byte >> 4) * 10 + (byte & 15)
+        code = f"{(raw[14] >> 4) * 10000 + bcd(raw[13]) * 100 + bcd(raw[12]):05d}"
+    else:
+        warnings.append("product code is not valid BCD")
+    return Header("gg", code=code, version=raw[14] & 15,
+                  region=raw[15] >> 4,
+                  checksum_size=GG_CHECKSUM_SIZES.get(raw[15] & 15),
+                  offsets=tuple(offset for offset, _ in found), raw=raw,
+                  warnings=tuple(warnings))
 
 
 def read_header(path: str) -> Header:
     """The header of a file on disk. An empty Header if it cannot be read."""
     try:
         with open(path, "rb") as f:
-            return header(f.read(HEADER))
+            first = header(f.read(HEADER))
+            if first:
+                return first
+            candidates = []
+            for offset in GG_HEADER_OFFSETS:
+                f.seek(offset)
+                candidates.append((offset, f.read(GG_HEADER_SIZE)))
+            return _gg_header(candidates)
     except OSError as e:
         say.err(f"cannot read {path}: {e}")
         return Header()
@@ -506,7 +556,7 @@ def identify(dump: Dump, catalog: nointro.Catalog) -> Identity:
     """Look a dump up in every DAT that is loaded.
 
     Every DAT, in a fixed order, and not the one the extension or the header
-    points at. A SHA-1 is in exactly one of them, so asking all three cannot be
+    points at. A SHA-1 is in exactly one of them, so asking every DAT cannot be
     ambiguous, and asking only the one the header suggested would file Pokemon
     Yellow and Pokemon Gold on the wrong sides of a split that was never made
     from the header. See the module docstring.
@@ -544,7 +594,7 @@ def dat_note(catalog: nointro.Catalog) -> str:
                 "DAT is added for at least one system.")
     have = ", ".join(nointro.SYSTEMS[p] for p in loaded)
     if not missing:
-        return f"Searched all three DATs: {have}."
+        return f"Searched all {len(loaded)} DATs: {have}."
     gap = ", ".join(nointro.SYSTEMS[p] for p in missing)
     return f"Searched {have}. No data loaded for {gap}."
 

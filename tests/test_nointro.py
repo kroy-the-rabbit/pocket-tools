@@ -188,6 +188,16 @@ class NointroTest(unittest.TestCase):
             nointro.system_for("Nintendo - Game Boy (Parent-Clone)"), "gb")
         self.assertEqual(nointro.system_for("Sega - Mega Drive"), "")
 
+    def test_game_gear_dat_flavours_load_from_downloaded_zips(self):
+        for source in (STANDARD, PARENT_CLONE):
+            with self.subTest(parent_clone=source is PARENT_CLONE):
+                xml = source.replace("Nintendo - Game Boy", "Sega - Game Gear")
+                xml = xml.replace('.gb"', '.gg"')
+                dat = self.dat(xml, "Sega - Game Gear", zipped=True)
+                self.assertEqual(dat.system, "gg")
+                self.assertEqual(dat.lookup(PARENT).name, "Widget Quest (World).gg")
+                self.assertEqual(dat.entries[CLONE].parent, "Widget Quest (World)")
+
     def test_the_dat_filename_is_used_verbatim(self):
         # A boot ROM in the Game Boy Advance DAT ends .bin, and rebuilding the
         # name from the game plus the system's extension would rename it.
@@ -235,7 +245,7 @@ class NointroTest(unittest.TestCase):
     def test_nothing_loaded_is_a_normal_state(self):
         catalog = nointro.Catalog()
         self.assertEqual(catalog.loaded(), ())
-        self.assertEqual(catalog.missing(), ("gb", "gbc", "gba"))
+        self.assertEqual(catalog.missing(), ("gb", "gbc", "gba", "gg"))
         self.assertFalse(catalog.get("gbc"))
         self.assertEqual(len(catalog.get("gbc")), 0)
 
@@ -244,7 +254,7 @@ class NointroTest(unittest.TestCase):
         self.assertEqual(catalog.add(DatFile(self.tmp.name, "Nintendo - Game Boy",
                                              STANDARD, True).path), "gb")
         self.assertEqual(catalog.loaded(), ("gb",))
-        self.assertEqual(catalog.missing(), ("gbc", "gba"))
+        self.assertEqual(catalog.missing(), ("gbc", "gba", "gg"))
 
     def test_a_system_with_no_dat_is_not_an_unknown_dump(self):
         # Reporting NO_DATA as UNKNOWN would blame the cartridge for a

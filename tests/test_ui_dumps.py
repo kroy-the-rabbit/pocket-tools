@@ -25,7 +25,7 @@ sys.path.insert(2, HERE)
 
 import tkinter as tk                                         # noqa: E402
 
-from test_dumps import dat_xml, gb_rom                        # noqa: E402
+from test_dumps import dat_xml, gb_rom, gg_rom                 # noqa: E402
 
 
 class Stub:
@@ -196,6 +196,16 @@ class Dialog(Fixture):
         p = self.put("UNKNOWN.gb", self.mystery)
         dlg = self.build()
         self.tick(dlg, p)
+        self.assertIn("disabled", dlg.add_btn.state())
+
+    def test_unknown_gg_shows_metadata_without_a_title_or_import_offer(self):
+        p = self.put("GG0000.gg", gg_rom())
+        dlg = self.build()
+        self.tick(dlg, p)
+        detail = dlg.describe(dlg.proposals[p])
+        self.assertIn("product 01234", detail)
+        self.assertIn("revision 3, region 6", detail)
+        self.assertIn("no game title or reliable ROM size", " ".join(detail.split()))
         self.assertIn("disabled", dlg.add_btn.state())
 
     def test_the_file_the_core_leaves_behind_is_not_a_dump(self):
@@ -582,7 +592,24 @@ class Dialog(Fixture):
 
     def test_the_maker_is_not_repeated_on_every_row(self):
         self.assertEqual(self.ui.DatDialog.plainly("gba"), "Game Boy Advance")
+        self.assertEqual(self.ui.DatDialog.plainly("gg"), "Game Gear")
         self.assertEqual(self.ui.DatDialog.plainly(""), "")
+
+    def test_game_gear_dat_is_found_labelled_and_loaded(self):
+        folder = self.dat_dir()
+        path = os.path.join(folder, "Sega - Game Gear (20260914).dat")
+        with open(path, "w") as f:
+            f.write(dat_xml(self.nointro.SYSTEMS["gg"], [
+                {"name": "Widget Gear (World)", "rom": "Widget Gear (World).gg",
+                 "data": gg_rom()}]))
+        dlg = self.ui.DatDialog(self.root, self.nointro.Catalog())
+        self.addCleanup(dlg.destroy)
+        self.assertIn(path, dlg.tree.get_children())
+        self.assertEqual(dlg.tree.set(path, "system"), "Game Gear")
+        self.assertIn("Game Gear (20260914).dat", dlg.tree.item(path, "text"))
+        dlg.tree.item(path, text=self.ui.TICK + dlg.tree.item(path, "text")[1:])
+        dlg.load()
+        self.assertEqual(dlg.catalog.loaded(), ("gg",))
 
     def test_get_dats_opens_the_page_it_names(self):
         opened = []
