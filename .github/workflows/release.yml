@@ -1,20 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Builds the picker for Linux, macOS and Windows on a tag, signs the result and
-# attaches it to the release.
-#
-# Signing here means GPG detached signatures over the artifacts and over the
-# checksum manifest, verified against the public key in KEYS at the root of
-# this repository. That is the only signature on the Linux and Windows builds,
-# and it is what docs/INSTALL.md tells people to check.
-#
-# macOS is NOT notarized and carries no Developer ID. The .app is ad-hoc
-# signed, which is the minimum Apple Silicon needs to run a binary at all, but
-# Gatekeeper will still refuse it on first launch; docs/INSTALL.md says how to
-# get past that. The workflow picks up a real Developer ID and notarizes with
-# it the moment the secrets exist, so nothing here has to change when they do.
-#
-# Signing is skipped, not failed, when the secrets are absent, so a fork can
-# cut a release without them.
+# Build three OS artifacts and stage a draft release. The maintainer signs
+# the downloads locally with the normal personal key before publishing.
+# The signing private key is not used by this workflow.
+# macOS retains its existing ad-hoc/optional Developer ID signing flow.
 name: release
 
 on:
@@ -275,87 +263,14 @@ jobs:
           find staging -type f -exec mv {} artifacts/ \;
           ls -l artifacts/
 
-      - name: Is there a key to sign with?
-        id: gpg
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+      - name: Checksums
         run: |
-          if [ -n "$GPG_PRIVATE_KEY" ] && [ -n "$GPG_KEY_ID" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::No GPG secrets set; the release will carry checksums but no signatures. See docs/RELEASING.md."
-          fi
-
-      - name: Import the release key
-        if: steps.gpg.outputs.enabled == 'true'
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-        run: |
-          export GNUPGHOME="$RUNNER_TEMP/gnupg"
-          mkdir -p "$GNUPGHOME"
-          chmod 700 "$GNUPGHOME"
-          echo "$GPG_PRIVATE_KEY" | base64 --decode | gpg --batch --import
-          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
-
-      - name: Checksums, and signatures over them
-        env:
-          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-        run: |
-          set -euo pipefail
           cd artifacts
           sha256sum * > SHA256SUMS
-          cat SHA256SUMS
-          if [ "${{ steps.gpg.outputs.enabled }}" != "true" ]; then
-            exit 0
-          fi
-          opts=(--batch --yes --pinentry-mode loopback)
-          if [ -n "${GPG_PASSPHRASE:-}" ]; then
-            opts+=(--passphrase "$GPG_PASSPHRASE")
-          fi
-          # The manifest signature is the one that matters: it covers every
-          # artifact at once and is what docs/INSTALL.md tells people to check.
-          gpg "${opts[@]}" --local-user "$GPG_KEY_ID" --armor \
-            --detach-sign --output SHA256SUMS.asc SHA256SUMS
-          # Per-artifact signatures as well, for anyone who fetches one file.
-          for f in *; do
-            case "$f" in
-              SHA256SUMS|SHA256SUMS.asc|*.sig) continue ;;
-            esac
-            [ -f "$f" ] || continue
-            gpg "${opts[@]}" --local-user "$GPG_KEY_ID" \
-              --detach-sign --output "$f.sig" "$f"
-          done
-          gpg --verify SHA256SUMS.asc SHA256SUMS
-          ls -l
-
-      - name: Verification instructions for the release notes
-        id: notes
-        run: |
-          {
-            echo "notes<<EOF"
-            echo "### Verifying these files"
-            echo
-            echo '```sh'
-            echo "gpg --import KEYS          # from this repository"
-            echo "gpg --verify SHA256SUMS.asc SHA256SUMS"
-            echo "sha256sum -c SHA256SUMS    # shasum -a 256 -c on macOS"
-            echo '```'
-            echo
-            echo "**Use at your own risk: cheats can corrupt save files.**"
-            echo "Back up saves you care about."
-            echo
-            echo "Builds are provided for Linux x86_64, Windows x64, and macOS arm64."
-            echo
-            echo "The macOS build is also **not notarized**. Gatekeeper will"
-            echo "refuse it on first launch; see docs/INSTALL.md."
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          sha256sum -c SHA256SUMS
 
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
-          generate_release_notes: true
-          body: ${{ steps.notes.outputs.notes }}
+          draft: true
+          body_path: .github/release-notes.md

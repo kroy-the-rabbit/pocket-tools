@@ -1,88 +1,47 @@
 # Cutting a release
 
-Tag it and the workflow does the rest: it builds the picker for Linux, macOS
-and Windows, signs the result, and attaches everything to the GitHub release.
+Signed tags on `main` build Linux x86_64, Windows x64 and macOS arm64
+artifacts in CI. The workflow uploads them to a **draft** release. Download,
+verify and sign the artifacts locally before publishing the draft.
 
-```sh
-release_tag="v0.9999.$(date -u +%Y%m%d)"
-git tag -s "$release_tag" -m "$release_tag"
-git push origin "$release_tag"
-```
-
-Use the UTC calendar date, once per published build. A date tag must not be
-reused for different binaries. The commit remains available from the signed
-tag and build provenance.
-
-The tag drives the version. `.github/workflows/release.yml` strips the leading
-`v` and rewrites `VERSION` in `cheatgui/version.py` before building, so a
-downloaded binary names the tag it came from and a run out of a checkout says
-`0.0.0-dev` instead.
-
-## What comes out
-
-| File | What it is |
-|---|---|
-| `pocket-tools-<version>-linux-x86_64` | one binary, run it |
-| `pocket-tools-<version>-macos-arm64.zip` | `Pocket Tools.app`, Apple Silicon |
-| `pocket-tools-<version>-windows-x64.exe` | one binary, run it |
-| `SHA256SUMS` | checksums of all of the above |
-| `SHA256SUMS.asc` | detached signature over `SHA256SUMS` |
-| `<file>.sig` | detached signature per artifact |
-
-Apple Silicon only on macOS. GitHub retired the Intel runners, and an Intel
-build is not worth keeping a second macOS job alive for; an Intel Mac runs it
-from a checkout, which [INSTALL.md](INSTALL.md) covers.
-
-Linux is the artifact that gets used. Windows is smoke tested under Wine by
-`make wine-test`, which starts the exe on a virtual display, checks that it
-drew something rather than merely staying alive, and exposes a fixture card as
-a drive letter so the Windows-only drive enumeration is exercised. macOS is
-built, signed and shape checked and nothing more.
-
-Both [INSTALL.md](INSTALL.md) and the README say exactly that, and should keep
-saying it until somebody has launched them on the real thing.
-
-Nothing is bundled but Python and Tk. The cheat database is fetched by the app
-on first run, so no third-party cheat content ships in a release and the
-artifacts stay under 20 MB.
+Use `v0.9999.YYYYMMDD` with the UTC publication date. Never reuse a published
+date for different binaries. The workflow stamps the tag's version into the
+app; a checkout keeps `0.0.0-dev`.
 
 ## Signing
 
-Two different things are called signing here and only one of them is set up.
+Commits, tags and release artifacts use the maintainer's normal key:
+`7268DF1E6F75DA7731A46B65888C35858FEACF72` (`Kroy <kroy@kroy.io>`).
+Its public key is in `KEYS`. The previous Pocket Cheats Release Signing key
+remains in that file to verify older releases. The personal private key is
+not uploaded to or imported by CI.
 
-**GPG, over the artifacts.** This is the signature this project offers, on
-every platform, and it is what [INSTALL.md](INSTALL.md) tells people to check.
-The public key is `KEYS` at the root of this repository.
+1. Run the checks below, review `.github/release-notes.md`, commit and merge
+   onto `main`. Push main and the signed dated tag.
+2. Wait for all three CI builds and the draft upload to finish. Download the
+   draft's assets and verify the CI `SHA256SUMS` before signing.
+3. Record the source commit and CI run in `BUILD.json`. Export the normal
+   public key as `RELEASE-KEY.asc`. Generate `SHA256SUMS` over the binaries,
+   provenance and public key; sign that manifest as `SHA256SUMS.asc` and each
+   artifact as `<filename>.sig` with the normal key.
+4. Verify every signature and checksum, upload the final files to the draft,
+   and publish it. Download again and verify the published files.
 
-**Apple notarization, for macOS.** Not set up. See below.
+## Release files
 
-### First time: make the key
-
-```sh
-packaging/make-release-key.sh
-```
-
-It creates a signing key for this project alone, writes the public half to
-`KEYS` for committing, and leaves the private half in `.release-key/` with the
-three `gh secret set` commands to run. Back that directory up offline and
-delete it afterwards.
-
-A key of its own rather than the one that signs your commits, because this half
-lives in a GitHub secret. A compromise of the repository or of a workflow reaches
-whatever that secret holds, and the cost of revoking a key that only ever signed
-releases is one release.
-
-### Secrets
-
-| Secret | Value |
+| File | Contents |
 |---|---|
-| `GPG_PRIVATE_KEY` | armored private key, base64 with no line wrapping |
-| `GPG_KEY_ID` | the fingerprint |
-| `GPG_PASSPHRASE` | the passphrase, if the key has one |
+| `pocket-tools-<version>-linux-x86_64` | Standalone Linux binary |
+| `pocket-tools-<version>-windows-x64.exe` | Standalone Windows binary |
+| `pocket-tools-<version>-macos-arm64.zip` | Pocket Tools.app, Apple Silicon |
+| `BUILD.json` | Source and CI build provenance |
+| `RELEASE-KEY.asc` | Normal signing public key |
+| `SHA256SUMS`, `SHA256SUMS.asc` | Checksums and detached signature |
+| `<filename>.sig` | Detached signature for each artifact |
 
-Absent, signing is skipped rather than failed: the release still carries
-`SHA256SUMS`, the workflow logs a warning, and a fork can cut a build without
-holding your key. Check for that warning on any release you meant to sign.
+The cheat database is fetched at runtime, not bundled. Windows can be smoke
+tested under Wine with `make wine-test`; this does not qualify native Windows
+behavior. macOS is built and package-checked; native testing is separate.
 
 ## macOS is not signed
 

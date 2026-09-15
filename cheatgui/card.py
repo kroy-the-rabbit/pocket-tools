@@ -94,6 +94,10 @@ KNOWN = {
     # corpus, and a HuCard cheat matched to a disc would be a wrong match.
     "pcecd": ("NEC - PC Engine CD - TurboGrafx-CD", ".cue"),
     "gg":  ("Sega - Game Gear", ".gg"),
+    "sms": ("Sega - Master System - Mark III", ".sms"),
+    # The core plays SG-1000 ROMs and reads local cheats, but libretro has no
+    # SG-1000 cheat directory. ROM discovery does not require a database.
+    "sg1000": ("", ".sg"),
     # The dumper. Both fields are empty because neither exists for it: it is
     # not a system you play, so libretro has no cheat directory for it, and its
     # output carries .gb, .gbc or .gba rather than an extension of its own. The
@@ -141,9 +145,9 @@ KNOWN = {
 # for, and the dumper reads none and writes none: it produces ROM images. Its
 # dumps reach the app through dumps.py and the Cartridge dumps category, not
 # through this list. See core.CORES, where it is a core like any other.
-# Game Gear: the core reads the `.cht`, Game Genie and Pro Action Replay. See
-# gg.py.
-ENABLED = ("gb", "gbc", "gba", "pce", "pcecd", "gg")
+# The three Sega packages read `.cht`, Game Genie and Pro Action Replay.
+# See gg.py for their shared decoder.
+ENABLED = ("gb", "gbc", "gba", "pce", "pcecd", "gg", "sms", "sg1000")
 
 # Which Assets folder a system's files live in, where it is not the id. A
 # disc and a HuCard share the Pocket's `pce` platform and its folder; the
@@ -155,9 +159,9 @@ def folder_of(pid: str) -> str:
     return FOLDER.get(pid, pid)
 
 # An entry with nothing in the field a set needs is dropped rather than carried
-# as an empty string. An empty extension would match every file on the card
-# that has none, and an empty cheat directory would put a dumper in the list of
-# systems to browse for games.
+# as an empty string. An empty extension would match every extensionless file;
+# an empty database name would ask the updater for a directory that does not
+# exist. SUPPORTED maps only downloadable corpora, not every playable system.
 SUPPORTED = {p: KNOWN[p][0] for p in ENABLED if KNOWN[p][0]}
 ROM_EXT = {KNOWN[p][1] for p in ENABLED if KNOWN[p][1]}
 # Extension -> system, for the systems that share a folder: a walk of
@@ -176,6 +180,8 @@ DISPLAY = {
     "pce": "PC Engine",
     "pcecd": "PC Engine CD",
     "gg":  "Game Gear",
+    "sms": "Master System",
+    "sg1000": "SG-1000",
 }
 
 # Folders skipped when listing games. Romhacks are usually pre-patched variants
@@ -253,7 +259,7 @@ class Card:
         all of them, and only the first time.
         """
         out = []
-        for pid in sorted(SUPPORTED):
+        for pid in sorted(p for p in ENABLED if KNOWN[p][1]):
             adir = os.path.join(self.root, "Assets", folder_of(pid))
             if not os.path.isdir(adir):
                 continue

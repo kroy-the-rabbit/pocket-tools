@@ -53,6 +53,8 @@ SEARCH = {
     "pce": ("pce",),
     "pcecd": ("pcecd",),
     "gg":  ("gg",),
+    "sms": ("sms",),
+    "sg1000": (),   # local sources only; no downloadable corpus
 }
 # A system switched off in card.ENABLED disables itself here: _files_for drops
 # any id that is not in card.SUPPORTED, so an entry above for a system that is
@@ -75,11 +77,11 @@ def _files_for(platform: str, db_dir: str, generation: int) -> tuple[str, ...]:
     cache after an update, which replaces the files in place and so leaves the
     path, and every other part of the key, exactly as it was.
     """
-    if not os.path.isdir(db_dir):
-        raise MissingDatabase(
-            f"{db_dir} not found. Press Update to fetch the cheat database.")
     dirs = list(SEARCH.get(platform, (platform,)))
     dirs = [card_mod.SUPPORTED[p] for p in dirs if p in card_mod.SUPPORTED]
+    if dirs and not os.path.isdir(db_dir):
+        raise MissingDatabase(
+            f"{db_dir} not found. Press Update to fetch the cheat database.")
     out: list[str] = []
     # yours first: an exact-name tie should land on the file you wrote
     if os.path.isdir(LOCAL):

@@ -165,16 +165,16 @@ cheats for the selected game. Tick the ones you want and press **Send to
 Pocket**.
 
 **Game Boy**, **Game Boy Color**, **Game Boy Advance**, **PC Engine**,
-**PC Engine CD** and **Game Gear** are listed. An NES or SNES core on the same card ignores cheat
+**PC Engine CD**, **Game Gear**, **Master System** and **SG-1000** are listed.
+An NES or SNES core on the same card ignores cheat
 files entirely, so offering checkboxes there would be a lie. A disc and a
 HuCard sit in the same folder on the card and appear as two systems here,
 because they are two cheat corpora.
 
-Which systems are offered is one tuple, `card.ENABLED`. Everything else follows
-from it: the database directories fetched, the ROM extensions recognised, the
-directories searched for a match. A system listed there and fetched but never
-read would be wasted download; one read but never fetched would be permanently
-empty, so they come from the same place and cannot drift.
+`card.ENABLED` selects the systems to offer; `card.KNOWN` records their ROM
+extensions and database directories. Only real cheat directories enter
+`card.SUPPORTED` and the updater's `db.DIRS`. SG-1000 has no downloadable
+corpus, so its ROMs and local cheat files work independently of that list.
 
 **Game Boy Advance was switched off for a while.** The core it was written
 against had no cheat data slot at all, so nothing written beside a GBA ROM was
@@ -256,9 +256,16 @@ the entry it guards. `gba.py` hands out one code per entry so the meter and the
 limit check stay honest with a single number, and nothing anywhere may sort or
 reorder them: adjacency is the conditional.
 
-## Game Gear
+## Game Gear, Master System and SG-1000
 
-One file, the `.cht`; the core reads text.
+Three independent core packages, `kroy.GG`, `kroy.SMS` and `kroy.SG1000`,
+from `openfpga-GG-cheats`. Each is offered in **Cores...** only when the
+release carries its own ZIP. All three need no BIOS.
+
+ROMs live under `Assets/gg/`, `Assets/sms/` and `Assets/sg1000/`, with
+extensions `.gg`, `.sms` and `.sg`. The app writes `Game.gg.cht`,
+`Game.sms.cht` or `Game.sg.cht` beside the ROM. The cores read text and use
+the descriptions for the named overlay; no binary companion is needed.
 
 | | | |
 |---|---|---|
@@ -272,7 +279,24 @@ One file, the `.cht`; the core reads text.
 - Skipped: mixed widths, `X` or `?` placeholders, pokes outside work RAM.
 - All 818 libretro Game Gear files match `gg2bin.model` and write back
   unchanged.
-- Store: 32 codes of either kind.
+- The existing adapter was also checked against 750 Master System files at
+  libretro revision `4968f556a0bf749378901086646b78bc78703b88`: accepted
+  entries match the reference model and chosen codes survive write-back.
+- Store: 32 codes across both kinds, with up to 32 cheat names.
+
+Game Gear searches `Sega - Game Gear`; Master System searches
+`Sega - Master System - Mark III`. Neither searches the other's corpus.
+An older downloaded database missing Master System prompts **Update**, even
+if its recorded revision otherwise matches. `make cheatdb` checks out the
+same supported directories for source users.
+
+SG-1000 has no downloadable libretro corpus. Its game list and installed
+`.sg.cht` files still work without a database. Use **Change source... >
+Browse .cht...** to select a local cheat file, or keep one in the app's
+local cheat directory. With no source, the pane says no matching cheat file
+was found. The decoder uses the core's format; SG-1000 cheats are not
+hardware-qualified. Core save states, sleep and FM settings need no desktop
+controls, and the app leaves battery saves alone when writing cheats.
 
 ## Codes we cannot read are carried, not guessed
 

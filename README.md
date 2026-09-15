@@ -42,7 +42,7 @@ This app runs on a computer; the cores below run on the handheld.
 | [openfpga-GBC-cheats](https://github.com/kroy-the-rabbit/openfpga-GBC-cheats) | Game Boy, Game Boy Color | ROM and cartridge cheats |
 | [openfpga-GBA-cheats](https://github.com/kroy-the-rabbit/openfpga-GBA-cheats) | Game Boy Advance | ROM and cartridge cheats |
 | [openfpga-pcengine-cheats](https://github.com/kroy-the-rabbit/openfpga-pcengine-cheats) | PC Engine, TurboGrafx-16, PC Engine CD | HuCard and CD ISO cheats (cue + bin on SD) |
-| [Game Gear core](https://github.com/kroy-the-rabbit/openfpga-GG-cheats) | Game Gear | ROM cheats from SD |
+| [Sega cores](https://github.com/kroy-the-rabbit/openfpga-GG-cheats) | Game Gear, Master System, SG-1000 | separate packages; ROM cheats from SD |
 | [openfpga-GameCom](https://github.com/kroy-the-rabbit/openfpga-GameCom) | Game.com | plays SD card ROMs, no cheats. Optional |
 | [openfpga-carttools](https://github.com/kroy-the-rabbit/openfpga-carttools) | GB, GBC, GBA | dumps cartridges, does not play them. Optional: install it and the dump features appear |
 
@@ -60,7 +60,8 @@ here, so a newly tagged core appears without this list having to be edited.
 
 | | |
 |---|---|
-| Picking cheats for Game Boy, Game Boy Color, Game Boy Advance, PC Engine, PC Engine CD, Game Gear | **works** |
+| Picking cheats for Game Boy, Game Boy Color, Game Boy Advance, PC Engine, PC Engine CD, Game Gear, Master System | **works** |
+| SG-1000 ROMs and local cheat files | **supported**, no downloadable cheat database; cheats not hardware-qualified |
 | Reading your ticks back off the card next time | **works** |
 | Installing and updating the cores | **works** |
 | Reporting which boot ROMs the card is missing | **works** |
@@ -161,7 +162,7 @@ ROMs...** for the whole list and where each one goes:
 | `gba_bios.bin` | `Assets/gba/common/` | 16384 bytes |
 | `gamecom_bios.bin` | `Assets/gamecom/common/` | 262144 bytes, asked for only once Game.com is installed |
 
-The PC Engine and Game Gear cores are not in that table because they need no
+The PC Engine and Sega cores are not in that table because they need no
 boot ROM, and neither does CartTools. A PC Engine CD needs a System Card, and the core
 declares that itself: `bios_3_0_usa.pce` in `Assets/pce/common/`, or any of the
 four others it names, and the app reports it missing only once the core is
@@ -181,7 +182,8 @@ drop it from the list this way.
 ## The cheat database
 
 The app needs the libretro cheat database: the directories for the systems it
-writes for, about 4200 files. It has none on first run: press **Update** in
+writes for, including separate Game Gear and Master System directories.
+It has none on first run: press **Update** in
 the bar along the bottom and it fetches one, roughly 16 MB and a minute. It
 comes from
 [libretro/libretro-database](https://github.com/libretro/libretro-database) and
@@ -204,7 +206,8 @@ there is something to download. An update that fails or is stopped leaves the
 database you already had exactly as it was.
 
 Cheat files of your own go in `~/.local/share/pocket-cheats/cht/`, outside the
-database, so an update cannot lose them. They are searched first.
+database, so an update cannot lose them. They are searched first. You can also
+select a file with **Change source... > Browse .cht...**.
 
 ## Ejecting
 
@@ -250,9 +253,9 @@ With a ROM on the card, none of this applies. The app reads the actual file,
 matches it, tells you which file it picked, and you can check a Game Genie
 compare byte against the ROM itself. A cartridge gives you none of that.
 
-**Add cartridge...** offers Game Boy and Game Boy Color and nothing else. Game
-Boy Advance and PC Engine are SD card only: cartridges are unsupported on both
-until their cores support them.
+**Add cartridge...** currently offers Game Boy and Game Boy Color. The GBA
+and Game Gear cores also support tested cartridges, with cheat files selected
+through their core menus. PC Engine has no physical cartridge path.
 
 ## What goes wrong, and how
 
@@ -511,7 +514,14 @@ cartridge path, so cheats here are for ROMs on the card.
 
 # Game Boy Advance
 
-SD card only.
+The desktop game list prepares cheats for SD ROMs. The core also plays
+physical cartridges, including the EverDrive GBA Mini with **ROM Timing**
+set to **Slow** for boot. Gameplay, cheats and saves are confirmed there.
+For cartridge play, select a matching cheat file through the core's
+**Cheats** slot. The desktop **Add cartridge...** list currently covers
+GB/GBC only. See the core's
+[cartridge guide](https://github.com/kroy-the-rabbit/openfpga-GBA-cheats/blob/main/docs/CARTRIDGE.md)
+for timing profiles and flash-cart limits.
 
 - **Two files per game:** `Game.gba.cht`, the cheats and their names, and
   `Game.gba.chtbin`, the same cheats packed. GBA release `v0.9999.20260913` reads
@@ -527,19 +537,43 @@ SD card only.
 
 ---
 
-# Game Gear
+# Game Gear, Master System and SG-1000
 
-The source is at `openfpga-GG-cheats`. No core release is currently available
-through **Cores...**.
+[openfpga-GG-cheats](https://github.com/kroy-the-rabbit/openfpga-GG-cheats)
+provides three independent packages. **Cores...** lists each one and offers
+installation when its ZIP is present in the repository's release. A release
+containing only Game Gear does not make the other packages available.
+Locally installed builds are recognized too. None needs a BIOS.
 
-- **One file:** the `.cht`. The core reads text and draws the names.
-- **Game Genie** `XXX-XXX-XXX`: ROM read override, `patched`.
+| Core | ROM directory | Cheat file beside the ROM |
+|---|---|---|
+| `kroy.GG` | `Assets/gg/common/` | `Game.gg.cht` |
+| `kroy.SMS` | `Assets/sms/common/` | `Game.sms.cht` |
+| `kroy.SG1000` | `Assets/sg1000/common/` | `Game.sg.cht` |
+
+- **One file:** the `.cht`. The cores read text and draw the names.
+- **Game Genie** `XXX-XXX-XXX`, or `XXX-XXX` without a compare: ROM read
+  override, `patched`.
 - **Pro Action Replay** `00AA-AADD`: work RAM write, `written`.
 - **Skipped:** codes with `X` or `?`, pokes outside C000-DFFF, fields mixing
   both kinds. The row stays, greyed.
-- **Store:** 32 codes.
-- Decoded by the core's `gg2bin.py` and `ggcht.py`; matches on all 818 libretro
-  Game Gear files.
+- **Store:** 32 codes across both kinds.
+- **Game Gear and Master System** each search their own libretro directory.
+  The decoder is shared; cheats are matched to the selected system.
+- **SG-1000** has no libretro cheat directory. Games still appear, and existing
+  `.sg.cht` files are read back. Use **Change source... > Browse .cht...** for
+  a local file, even without a downloaded database. SG-1000 cheats have not
+  been qualified on hardware.
+
+The shared decoder follows the core's `gg2bin.py` and `ggcht.py`. Game Gear
+and Master System cheats and the named overlay are confirmed on the Pocket.
+The desktop game list covers SD ROMs. The Game Gear core also
+supports a limited set of cartridges through Analogue's Game Gear adapter;
+check the core's release notes for availability and tested cartridges.
+That mode copies the ROM into memory. **Cartridge saves are not working:**
+nothing is written back to the cartridge and no Pocket SD save is kept in
+Play Cartridge mode. It has no desktop cartridge-list entry yet. Save states,
+sleep and FM sound are core features with controls on the Pocket.
 
 ---
 
@@ -572,7 +606,7 @@ for how that copy is kept honest.
 
 | | |
 |---|---|
-| [docs/CHEATGUI.md](docs/CHEATGUI.md) | the full guide, including the PC Engine and Game Gear code shapes |
+| [docs/CHEATGUI.md](docs/CHEATGUI.md) | the full guide, including the PC Engine and Sega code shapes |
 | [docs/INSTALL.md](docs/INSTALL.md) | install notes and how to check a download's signature |
 | [docs/RELEASING.md](docs/RELEASING.md) | releasing, signing, and the state of macOS notarization |
 | [cheats/README.md](cheats/README.md) | the parsers copied from the cores, and how they are kept in step |

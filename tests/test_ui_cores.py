@@ -91,6 +91,32 @@ class Dialog(unittest.TestCase):
         self.assertEqual(list(dlg.tree.get_children()),
                          [c.id for c in core_mod.CORES])
 
+    def test_a_gg_only_release_keeps_sms_and_sg1000_unavailable(self):
+        rels = releases("1.0", [core_mod.GG_REPO])
+        rels[core_mod.GG_REPO]["assets"] = {"kroy.GG_1.0.zip": "zip:kroy.GG"}
+        dlg = self.build({"kroy.SMS": "local-build"}, rels)
+        self.assertEqual(dlg.tree.set("kroy.GG", "avail"), "1.0")
+        self.assertEqual(dlg.tree.set("kroy.SMS", "card"), "local-build")
+        for cid in ("kroy.SMS", "kroy.SG1000"):
+            self.assertEqual(dlg.tree.set(cid, "avail"), "no release yet")
+            dlg.toggle_row(cid)
+            self.assertFalse(dlg.rows[cid][1])
+
+    def test_sega_packages_can_be_selected_independently(self):
+        dlg = self.build({}, releases("1.0", [core_mod.GG_REPO]))
+        for cid in ("kroy.GG", "kroy.SMS", "kroy.SG1000"):
+            self.assertTrue(dlg.rows[cid][1])
+        dlg.toggle_row("kroy.GG")
+        dlg.toggle_row("kroy.SG1000")
+        dlg.ok()
+        self.assertEqual([c.id for c in dlg.result], ["kroy.SMS"])
+
+    def test_all_core_rows_fit_the_dialog(self):
+        dlg = self.build({}, None)
+        dlg.update_idletasks()
+        self.assertGreaterEqual(int(dlg.tree.cget("height")), len(core_mod.CORES))
+        self.assertLess(dlg.winfo_reqheight(), dlg.winfo_screenheight())
+
     def test_clicking_a_row_toggles_it_and_the_tick_follows(self):
         rels = releases("2.0", [core_mod.GBC_REPO])
         dlg = self.build({c.id: None for c in core_mod.CORES}, rels)

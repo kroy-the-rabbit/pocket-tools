@@ -199,6 +199,28 @@ class Versions(Env):
         self.assertIn("unknown version", db.describe(local))
 
 
+class SegaDatabase(Env):
+    def test_an_old_cache_without_sms_is_incomplete_at_the_same_sha(self):
+        sms = "Sega - Master System - Mark III"
+        self.assertIn(sms, db.DIRS)
+        self.assertFalse(any("SG-1000" in d for d in db.DIRS))
+        for d in db.DIRS:
+            if d == sms:
+                continue
+            folder = os.path.join(db.store_cht(), d)
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, "Game.cht"), "w") as f:
+                f.write('cheat0_code = "00C0-0001"\n')
+        with open(db.state_file(), "w") as f:
+            json.dump({"sha": "same", "date": "2026-09-15"}, f)
+        local = db.local_state()
+        self.assertEqual(local["missing"], [sms])
+        self.assertFalse(db.up_to_date(local, {"sha": "same"}))
+        self.assertIn("Master System - Mark III: press Update", db.describe(local))
+        populate(db.store_cht())
+        self.assertTrue(db.up_to_date(db.local_state(), {"sha": "same"}))
+
+
 class Swap(Env):
     def test_swap_replaces_the_whole_directory(self):
         dest = db.store_cht()

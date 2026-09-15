@@ -40,6 +40,13 @@ fetches one. The [boot ROM table in the README](../README.md#boot-roms) names
 every file, so you can go and find them before the card is ever plugged in.
 **Eject** when you are done.
 
+The Sega core repository supplies separate Game Gear, Master System and
+SG-1000 packages. Pick the ones you want in **Cores...**; each needs its own
+published ZIP and none needs a BIOS. ROMs go in `Assets/gg/common/` (`.gg`),
+`Assets/sms/common/` (`.sms`) or `Assets/sg1000/common/` (`.sg`). SG-1000
+uses local cheat files through **Change source... > Browse .cht...**;
+it has no downloadable cheat database.
+
 ## Verify what you downloaded first
 
 The releases are signed. Checking that takes ten seconds and is the only thing
@@ -51,8 +58,8 @@ same name.
 gpg --import KEYS
 
 # check the fingerprint against a source that is not this repository
-gpg --fingerprint "Pocket Cheats Release Signing"
-# C72E 94F3 D71E AD3D 41C9  A520 D6A3 B4CE 5A76 405D
+gpg --fingerprint 888C35858FEACF72
+# 7268 DF1E 6F75 DA77 31A4  6B65 888C 3585 8FEA CF72
 
 # the signature covers the whole manifest
 gpg --verify SHA256SUMS.asc SHA256SUMS
@@ -60,6 +67,9 @@ gpg --verify SHA256SUMS.asc SHA256SUMS
 # and the manifest covers the files
 sha256sum -c SHA256SUMS          # macOS: shasum -a 256 -c SHA256SUMS
 ```
+
+Releases from September 15, 2026 use the normal Kroy signing key above.
+`KEYS` also retains the older dedicated key for earlier releases.
 
 `sha256sum -c` complains about files you did not download. That is expected;
 what matters is that the line for the file you did download says `OK`.

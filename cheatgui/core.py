@@ -138,8 +138,10 @@ CORES = (
     # and reported as unreleased; v0.2.1 renames it. Its manifest check now
     # fails on a directory name with a space, so that cannot recur silently.
     Core("kroy.PCE", "pce", "PC Engine", "kroy.PCE_", PCE_REPO, ()),
-    # Game Gear needs no boot ROM.
+    # Separate packages from one repository; none needs a boot ROM.
     Core("kroy.GG", "gg", "Game Gear", "kroy.GG_", GG_REPO, ()),
+    Core("kroy.SMS", "sms", "Master System", "kroy.SMS_", GG_REPO, ()),
+    Core("kroy.SG1000", "sg1000", "SG-1000", "kroy.SG1000_", GG_REPO, ()),
     # No cheats. Optional: absent, it is not an update and its BIOS is not
     # asked for.
     Core("kroy.GameCom", "gamecom", "Game.com", "kroy.GameCom_", GAMECOM_REPO,
@@ -210,7 +212,9 @@ def released(platform: str, rels: dict[str, dict] | None = None) -> bool:
     mine = [c for c in CORES if c.platform == platform]
     if rels is None:
         return any(c.repo for c in mine)
-    return any(release_for(c, rels) for c in mine)
+    # A repository can publish one platform before the others. An older GG
+    # release has no SMS or SG-1000 package, even though they share a repo.
+    return any(asset_for(c, rels) for c in mine)
 
 
 # ------------------------------------------------------------------ the card --

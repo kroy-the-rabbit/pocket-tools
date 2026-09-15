@@ -594,6 +594,72 @@ class NewCores(Env):
             "Assets", "gamecom", "common", "gamecom_bios.bin"))
 
 
+class SegaCores(Env):
+    SEGA = tuple(BY_ID[cid] for cid in ("kroy.GG", "kroy.SMS", "kroy.SG1000"))
+
+    def test_a_gg_only_release_does_not_release_the_other_platforms(self):
+        rels = releases("1.0", repos=[core.GG_REPO])
+        rels[core.GG_REPO]["assets"] = {"kroy.GG_1.0.zip": "zip:kroy.GG"}
+        self.assertTrue(core.released("gg", rels))
+        self.assertFalse(core.released("sms", rels))
+        self.assertFalse(core.released("sg1000", rels))
+        self.assertEqual(core.outdated(every(None), rels), [BY_ID["kroy.GG"]])
+
+    def test_each_package_needs_its_own_asset(self):
+        for selected in self.SEGA:
+            with self.subTest(core=selected.id):
+                rels = releases("1.0", repos=[core.GG_REPO], assets=False)
+                rels[core.GG_REPO]["assets"][selected.asset + "1.0.zip"] = "zip"
+                for c in self.SEGA:
+                    self.assertEqual(core.released(c.platform, rels), c == selected)
+                self.assertEqual(core.outdated(every(None), rels), [selected])
+        self.assertEqual(core.repos().count(core.GG_REPO), 1)
+
+    def test_installed_sega_packages_need_no_bios(self):
+        for c in self.SEGA:
+            install_core(self.root, c, "local-build")
+        survey = core.survey(self.root)
+        for c in self.SEGA:
+            self.assertTrue(core.installed_for(survey, c.platform))
+            self.assertFalse(core.released(c.platform, {}))
+            self.assertEqual(c.bios, ())
+            self.assertFalse(any(r.core == c for r in survey.roms))
+        rels = releases("1.0", repos=[core.GG_REPO])
+        rels[core.GG_REPO]["published"] = ["1.0"]
+        self.assertEqual(core.outdated(survey.versions, rels), [])
+
+    def test_installing_sms_preserves_neighboring_cores_roms_and_saves(self):
+        sms = BY_ID["kroy.SMS"]
+        for c in self.SEGA:
+            install_core(self.root, c, "0.9")
+        rom = os.path.join(self.root, "Assets", "sms", "common", "Game.sms")
+        save = os.path.join(self.root, "Saves", "sms", "common", "Game.sav")
+        write(rom, "keep ROM")
+        write(save, "keep save")
+        package = release_zip(sms, "1.0", [
+            ("Assets/sms/common/Game.sms", "must not overwrite"),
+        ])
+        with unittest.mock.patch.object(core, "_fetch", return_value=package):
+            core.install(self.root, releases("1.0"), cores=[sms])
+        survey = core.survey(self.root)
+        self.assertEqual(survey.versions[sms.id], "1.0")
+        for cid in ("kroy.GG", "kroy.SG1000"):
+            self.assertEqual(survey.versions[cid], "0.9")
+        for path, expected in ((rom, "keep ROM"), (save, "keep save")):
+            with open(path) as f:
+                self.assertEqual(f.read(), expected)
+
+    def test_one_sega_zip_cannot_be_installed_as_another(self):
+        for offered in self.SEGA:
+            for selected in self.SEGA:
+                if offered == selected:
+                    continue
+                with self.subTest(offered=offered.id, selected=selected.id):
+                    with zipfile.ZipFile(io.BytesIO(release_zip(offered, "1.0"))) as zf:
+                        with self.assertRaises(RuntimeError):
+                            core._members(zf, selected)
+
+
 class NoBios(Env):
     """An empty `bios` tuple is an answer, not a missing one.
 

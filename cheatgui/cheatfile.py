@@ -18,7 +18,8 @@ file written back from that has lost half of itself.
 
 So each system has its own reader, and the choice of reader is the whole of
 this module. `gba.py` reads Game Boy Advance, `pce.py` reads PC Engine and
-`gg.py` reads Game Gear. See MECHANISMS for how each core applies a code.
+`gg.py` reads Game Gear, Master System and SG-1000. See MECHANISMS for how
+each core applies a code.
 
 A system whose codes cannot be decoded is carried verbatim instead: listed,
 picked and written back exactly as it came, with nothing claimed about what any
@@ -44,7 +45,8 @@ import pce as pce_mod
 # through gba.py, which adapts `gbacht` - the same relationship chtparse has to
 # the Game Boy core, except that on this system the decoder is what produces
 # the file the hardware reads rather than a model of a parser inside it.
-DECODED = ("gb", "gbc", "gba", "pce", "pcecd", "gg")
+SEGA = ("gg", "sms", "sg1000")
+DECODED = ("gb", "gbc", "gba", "pce", "pcecd", *SEGA)
 
 # How many ways a system's core can make a code take effect.
 #
@@ -60,7 +62,8 @@ MECHANISMS = {
     "gba": ("poke", "patch"),   # ROM writes are patched on the read side
     "pce": ("poke",),
     "pcecd": ("poke",),     # a disc's cheats are the same RAM pokes
-    "gg":  ("poke", "patch"),   # Pro Action Replay and Game Genie
+    # All three Sega packages use Pro Action Replay and Game Genie.
+    **{p: ("poke", "patch") for p in SEGA},
 }
 
 # What the core can hold. No limit is claimed for a system whose core has not
@@ -75,9 +78,9 @@ LIMITS = {
     "gb":  (chtparse.MAX_GROUPS, chtparse.MAX_CODES),
     "gbc": (chtparse.MAX_GROUPS, chtparse.MAX_CODES),
     "gba": (gba_mod.MAX_ENTRIES, gba_mod.MAX_ENTRIES),
-    # Game Gear: one CODES table of 32 entries, one per code of either kind,
+    # Sega: one CODES table of 32 entries, one per code of either kind,
     # and cheat_titles holds 32 names.
-    "gg":  (gg_mod.MAX_CODES, gg_mod.MAX_CODES),
+    **{p: (gg_mod.MAX_CODES, gg_mod.MAX_CODES) for p in SEGA},
 }
 
 # Reading a file to choose from is not reading it to run. The core takes the
@@ -173,7 +176,7 @@ def parse(data: bytes, platform: str, max_groups: int = NO_LIMIT) -> list:
         return gba_mod.parse(data, max_groups=max_groups)
     if platform in ("pce", "pcecd"):
         return pce_mod.parse(data, max_groups=max_groups)
-    if platform == "gg":
+    if platform in SEGA:
         return gg_mod.parse(data, max_groups=max_groups)
     if decoded(platform):
         return chtparse.parse(data, max_codes=NO_LIMIT, max_groups=max_groups)
@@ -186,7 +189,7 @@ def applied_by(code, platform: str) -> str:
         return gba_mod.applied_by(code)
     if platform in ("pce", "pcecd"):
         return pce_mod.applied_by(code)
-    if platform == "gg":
+    if platform in SEGA:
         return gg_mod.applied_by(code)
     if not decoded(platform):
         return ""

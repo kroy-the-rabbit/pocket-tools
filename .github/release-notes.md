@@ -1,19 +1,45 @@
-Pocket Tools now reads, selects and writes Game Gear cheats, including
-Game Genie ROM patches and Pro Action Replay RAM writes. The Cores window
-installs Game Gear from `kroy-the-rabbit/openfpga-GG-cheats` and offers
-Game.com as an optional core, with its external BIOS requirement shown.
+## Master System, SG-1000 and Game Gear dumps
 
-GBA support matches the cartridge core release: CodeBreaker ROM writes are
-recognized as patches, IWRAM address decoding is corrected, and the picker
-writes both `.cht` and `.chtbin`. Text files supply names to the new overlay;
-binary files preserve compatibility with the older `v0.9999` core. The app's
-GBA game picker still manages SD ROMs; cartridge cheats are selected through
-the core's menu.
+Pocket Tools now recognizes **Game Gear, Master System and SG-1000** as
+separate platforms. **Cores...** offers each Sega package only when the core
+release contains that platform's ZIP. Installation preserves existing ROMs,
+BIOS files and saves.
 
-Automatic update suggestions now preserve core versions that are known to
-be unpublished local builds. Users can still select a release explicitly
-through Cores.
+- **Master System:** scan `.sms` ROMs, find cheats in the Master System
+  database, decode them and write named `.cht` files beside the ROM.
+- **SG-1000:** scan `.sg` ROMs and use installed or local `.cht` files through
+  **Change source... > Browse .cht...**. There is no downloadable SG-1000
+  cheat database, and SG-1000 cheats have not been verified on hardware.
+- **Sega cheats:** Game Genie ROM patches and Pro Action Replay RAM writes
+  share the core's 32-code limit. Game Gear and Master System use separate
+  database directories and the same decoder as the core.
+- **Game Gear dumps:** recognize and import dumps produced by an installed
+  CartTools core, identify them with the Sega - Game Gear No-Intro DAT, and
+  file them in the library.
 
-Validation: 569 tests passed on a virtual display, with three optional
-external-corpus tests skipped. All six shared parser/converter files match
-their core repositories. The Linux PyInstaller build passed locally.
+Use `Assets/gg/common/` for `.gg`, `Assets/sms/common/` for `.sms` and
+`Assets/sg1000/common/` for `.sg`. None of the Sega packages needs a BIOS.
+Use **Update** if an older cheat database is missing Master System.
+
+The desktop cartridge list still covers GB/GBC. GBA and supported Game Gear
+cartridges use a cheat file selected through the core's own menu. Game Gear
+cartridge saves are not working; see each core's notes for tested cartridges
+and save behavior.
+
+Available builds: Linux x86_64, Windows x64 and macOS arm64. The macOS app is
+not notarized; see [installation instructions](https://github.com/kroy-the-rabbit/pocket-tools/blob/main/docs/INSTALL.md).
+The cheat database is fetched at runtime and is not bundled.
+
+### Verify the download
+
+Artifacts use the normal Kroy key, fingerprint
+`7268DF1E6F75DA7731A46B65888C35858FEACF72`. Import `KEYS` from this
+repository, then verify the signed checksum manifest:
+
+```sh
+gpg --import KEYS
+gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum -c SHA256SUMS
+```
+
+Cheats can corrupt saves. Back up saves you care about before using them.

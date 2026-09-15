@@ -4040,6 +4040,9 @@ class Chooser(tk.Toplevel):
         row.grid(row=2, column=0, sticky="ew")
         ttk.Button(row, text="Use this", command=self.choose).pack(side="right")
         ttk.Button(row, text="Cancel", command=self.destroy).pack(side="right", padx=4)
+        self.browse_btn = ttk.Button(row, text="Browse .cht...",
+                                     command=self.browse)
+        self.browse_btn.pack(side="left", padx=(0, 6))
         # Not in the list above because nothing matches it: an archive is a
         # file you went and got, not a database entry, so it is chosen rather
         # than ranked.
@@ -4062,6 +4065,22 @@ class Chooser(tk.Toplevel):
         if not sel:
             return
         self.use(self.view.alternates[sel[0]].path)
+
+    def browse(self) -> None:
+        """Choose a local text file, including for a system with no database."""
+        path = filedialog.askopenfilename(
+            parent=self, title="A cheat file for this game",
+            filetypes=[("Cheat file", "*.cht"), ("Every file", "*")])
+        if not path:
+            return
+        try:
+            if not path.lower().endswith(".cht"):
+                raise ValueError("Choose a .cht text file.")
+            if not writer.load_library(path, self.view.platform):
+                raise ValueError("No cheats found in this file.")
+            self.use(path)
+        except (OSError, ValueError) as e:
+            messagebox.showerror("Cheat source", str(e), parent=self)
 
     def from_archive(self) -> None:
         """Pin a GameHacking.org zip, the kind MiSTer ships, as the source."""

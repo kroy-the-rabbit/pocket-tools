@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Game Gear cheat codes.
+"""Game Gear, Master System and SG-1000 cheat codes.
 
   Game Genie         XXX-XXX-XXX or XXX-XXX: ROM read override, "patch".
   Pro Action Replay  00AA-AADD: work RAM write at C000-DFFF, "poke".
@@ -80,7 +80,7 @@ def codes_of(text: str) -> list[Code]:
 
 
 def parse(data: bytes, max_groups: int = 1 << 30) -> list[Group]:
-    """Cheat groups from a Game Gear `.cht`, in file order.
+    """Cheat groups from a Sega `.cht`, in file order.
 
     Keys are gathered the way `gg2bin.model` gathers them. A cheat with no
     `_enable` key is on.
